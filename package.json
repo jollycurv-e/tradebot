@@ -1,0 +1,27 @@
+{
+  "name": "trader-bot",
+  "version": "1.0.0",
+  "description": "A Discord bot for tracking trades between users",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.6.1",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.6"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "trading",
+    "javascript"
+  ],
+  "author": "",
+  "license": "MIT"
+}
