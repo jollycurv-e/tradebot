@@ -165,6 +165,7 @@ class TraderBot {
                             { name: 'Dismiss Report', value: 'dismiss' },
                             { name: 'Cancel Trade', value: 'cancel' },
                             { name: 'Warn User', value: 'warn' },
+                            { name: 'Mark Scammer', value: 'mark_scammer' },
                             { name: 'Pending Reports', value: 'pending' },
                             { name: 'Resolved Reports', value: 'resolved' },
                             { name: 'All Reports', value: 'all' }
@@ -179,11 +180,22 @@ class TraderBot {
             const guildId = process.env.GUILD_ID;
             if (guildId) {
                 const guild = this.client.guilds.cache.get(guildId);
+                await this.client.application.commands.set([]);
+                debug('Cleared global commands');
                 await guild.commands.set(commands);
                 console.log(`✅ Successfully reloaded guild application (/) commands for ${guild.name}.`);
             } else {
                 await this.client.application.commands.set(commands);
                 console.log('✅ Successfully reloaded global application (/) commands.');
+            }
+            for (const cmd of commands) {
+                const json = cmd.toJSON();
+                debug(`Registered /${json.name}`);
+                for (const opt of json.options || []) {
+                    if (opt.choices?.length) {
+                        debug(`  ${opt.name} choices: ${opt.choices.map(c => c.value).join(', ')}`);
+                    }
+                }
             }
         } catch (error) {
             console.error('Error registering slash commands:', error);

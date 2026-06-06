@@ -93,9 +93,11 @@ function init(db) {
         if (action === 'dismiss') {
             actionDescription = 'Report dismissed - no action taken';
         } else if (action === 'cancel') {
-            await new Promise((resolve, reject) => {
-                db.run('UPDATE trades SET status = "cancelled" WHERE id = ?', [report.trade_id], (err) => err ? reject(err) : resolve());
-            });
+            if (report.trade_id) {
+                await new Promise((resolve, reject) => {
+                    db.run('UPDATE trades SET status = "cancelled" WHERE id = ?', [report.trade_id], (err) => err ? reject(err) : resolve());
+                });
+            }
             actionDescription = 'Trade cancelled due to report';
         } else if (action === 'warn') {
             await new Promise((resolve, reject) => {
@@ -105,10 +107,33 @@ function init(db) {
                     (err) => err ? reject(err) : resolve()
                 );
             });
-            await new Promise((resolve, reject) => {
-                db.run('UPDATE trades SET status = "cancelled" WHERE id = ?', [report.trade_id], (err) => err ? reject(err) : resolve());
-            });
+            if (report.trade_id) {
+                await new Promise((resolve, reject) => {
+                    db.run('UPDATE trades SET status = "cancelled" WHERE id = ?', [report.trade_id], (err) => err ? reject(err) : resolve());
+                });
+            }
             actionDescription = 'User warned and trade cancelled';
+        } else if (action === 'mark_scammer') {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT OR REPLACE INTO scammer_list (user_id, moderator_id, reason, guild_id) VALUES (?, ?, ?, ?)',
+                    [report.reported_user_id, moderatorId, `Trade report: ${report.reason}`, guildId],
+                    (err) => err ? reject(err) : resolve()
+                );
+            });
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO user_warnings (user_id, moderator_id, reason, guild_id) VALUES (?, ?, ?, ?)',
+                    [report.reported_user_id, moderatorId, `Marked as scammer via trade report: ${report.reason}`, guildId],
+                    (err) => err ? reject(err) : resolve()
+                );
+            });
+            if (report.trade_id) {
+                await new Promise((resolve, reject) => {
+                    db.run('UPDATE trades SET status = "cancelled" WHERE id = ?', [report.trade_id], (err) => err ? reject(err) : resolve());
+                });
+            }
+            actionDescription = 'User marked as scammer, warned, and trade cancelled';
         }
 
         await new Promise((resolve, reject) => {
