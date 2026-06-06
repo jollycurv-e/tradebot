@@ -70,6 +70,13 @@ async function setupDatabase(dbPath) {
                         guild_id TEXT NOT NULL,
                         UNIQUE(user_id, guild_id)
                     )
+                `);
+
+                db.run(`
+                    CREATE TABLE IF NOT EXISTS config (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL
+                    )
                 `, (err) => {
                     if (err) reject(err);
                     else resolve(db);

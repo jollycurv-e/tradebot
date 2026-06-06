@@ -45,9 +45,18 @@ class TraderBot {
             try {
                 if (interaction.isButton()) {
                     debug(`Button interaction from ${interaction.user.tag}: customId=${interaction.customId} guild=${interaction.guild?.id}`);
-                    const [action, tradeId] = interaction.customId.split('_');
-                    if (action === 'report') {
+                    const customId = interaction.customId;
+                    if (customId.startsWith('report_')) {
+                        const tradeId = customId.split('_')[1];
                         await this.reports.handleReportButton(interaction, tradeId, interaction.user.id);
+                    } else if (customId.startsWith('mod_resolve_')) {
+                        const reportId = customId.split('_')[2];
+                        await this.mod.showResolveActions(interaction, reportId);
+                    } else if (customId.startsWith('mod_action_')) {
+                        const parts = customId.split('_');
+                        const reportId = parts[2];
+                        const action = parts.slice(3).join('_');
+                        await this.mod.handleResolveAction(interaction, reportId, action);
                     } else {
                         await this.trades.handleButtonInteraction(interaction);
                     }
@@ -174,6 +183,10 @@ class TraderBot {
                     option.setName('details')
                         .setDescription('Additional details for scammer marking or deletion reason')
                         .setRequired(false))
+                .addStringOption(option =>
+                    option.setName('since')
+                        .setDescription('Export new trades since this date (YYYY-MM-DD). Defaults to last export date.')
+                        .setRequired(false))
         ];
 
         try {
@@ -246,6 +259,7 @@ class TraderBot {
             const id = interaction.options.getInteger('id');
             const reason = interaction.options.getString('reason');
             const details = interaction.options.getString('details');
+            const since = interaction.options.getString('since');
 
             switch (action) {
                 case 'reports':
@@ -282,10 +296,10 @@ class TraderBot {
                     await this.mod.unmarkScammer(interaction, user);
                     break;
                 case 'export_summary':
-                    await this.mod.exportTradeSummary(interaction);
+                    await this.mod.exportTradeSummary(interaction, since);
                     break;
                 case 'export_full':
-                    await this.mod.exportFullStats(interaction);
+                    await this.mod.exportFullStats(interaction, since);
                     break;
                 default:
                     await interaction.reply({ content: '❌ Invalid moderation action!', ephemeral: true });

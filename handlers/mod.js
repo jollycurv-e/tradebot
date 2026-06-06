@@ -299,6 +299,23 @@ function init(db) {
         await interaction.reply({ embeds: [embed] });
     }
 
+    async function getConfig(key) {
+        return new Promise((resolve, reject) => {
+            db.get('SELECT value FROM config WHERE key = ?', [key], (err, row) => err ? reject(err) : resolve(row ? row.value : null));
+        });
+    }
+
+    async function setConfig(key, value) {
+        return new Promise((resolve, reject) => {
+            db.run('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', [key, value], (err) => err ? reject(err) : resolve());
+        });
+    }
+
+    function parseSinceDate(since) {
+        const d = new Date(since);
+        return isNaN(d.getTime()) ? null : d.toISOString();
+    }
+
     function csvCell(value) {
         const str = String(value);
         return str.includes(',') || str.includes('"') || str.includes('\n') ? `"${str.replace(/"/g, '""')}"` : str;
@@ -313,8 +330,15 @@ function init(db) {
         return map;
     }
 
-    async function exportTradeSummary(interaction) {
+    async function exportTradeSummary(interaction, sinceInput) {
         await interaction.deferReply();
+
+        let sinceTs = sinceInput ? parseSinceDate(sinceInput) : await getConfig('last_export_at');
+        if (sinceInput && !sinceTs) {
+            return interaction.editReply({ content: '❌ Invalid date format. Use YYYY-MM-DD.' });
+        }
+        const sinceLabel = sinceTs ? `since ${sinceTs.slice(0, 10)}` : 'all time (no previous export)';
+
         const rows = await new Promise((resolve, reject) => {
             db.all(`
                 SELECT
@@ -323,15 +347,16 @@ function init(db) {
                     SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
                     SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
                     SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
-                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending
+                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                    SUM(CASE WHEN status = 'confirmed' AND confirmed_at >= ? THEN 1 ELSE 0 END) as new_confirmed
                 FROM (
-                    SELECT initiator_id as user_id, status FROM trades
+                    SELECT initiator_id as user_id, status, confirmed_at FROM trades
                     UNION ALL
-                    SELECT recipient_id as user_id, status FROM trades
+                    SELECT recipient_id as user_id, status, confirmed_at FROM trades
                 )
                 GROUP BY user_id
                 ORDER BY total_trades DESC
-            `, [], (err, rows) => err ? reject(err) : resolve(rows));
+            `, [sinceTs || '1970-01-01T00:00:00.000Z'], (err, rows) => err ? reject(err) : resolve(rows));
         });
 
         if (!rows.length) {
@@ -340,15 +365,24 @@ function init(db) {
 
         const userMap = await buildUserMap(interaction.client, rows.map(r => r.user_id));
 
-        const csv = 'username,user_id,total_trades,confirmed,rejected,cancelled,pending\n'
-            + rows.map(r => [csvCell(userMap.get(r.user_id)), r.user_id, r.total_trades, r.confirmed, r.rejected, r.cancelled, r.pending].join(',')).join('\n');
+        const csv = 'username,user_id,total_trades,confirmed,rejected,cancelled,pending,new_confirmed\n'
+            + rows.map(r => [csvCell(userMap.get(r.user_id)), r.user_id, r.total_trades, r.confirmed, r.rejected, r.cancelled, r.pending, r.new_confirmed].join(',')).join('\n');
+
+        await setConfig('last_export_at', new Date().toISOString());
 
         const attachment = new AttachmentBuilder(Buffer.from(csv, 'utf-8'), { name: 'trade_summary.csv' });
-        await interaction.editReply({ content: `📊 Trade summary — ${rows.length} users`, files: [attachment] });
+        await interaction.editReply({ content: `📊 Trade summary — ${rows.length} users (new trades ${sinceLabel})`, files: [attachment] });
     }
 
-    async function exportFullStats(interaction) {
+    async function exportFullStats(interaction, sinceInput) {
         await interaction.deferReply();
+
+        let sinceTs = sinceInput ? parseSinceDate(sinceInput) : await getConfig('last_export_at');
+        if (sinceInput && !sinceTs) {
+            return interaction.editReply({ content: '❌ Invalid date format. Use YYYY-MM-DD.' });
+        }
+        const sinceLabel = sinceTs ? `since ${sinceTs.slice(0, 10)}` : 'all time (no previous export)';
+
         const rows = await new Promise((resolve, reject) => {
             db.all(`
                 SELECT
@@ -360,12 +394,13 @@ function init(db) {
                     SUM(CASE WHEN t.status = 'pending' THEN 1 ELSE 0 END) as pending,
                     SUM(CASE WHEN t.is_initiator = 1 THEN 1 ELSE 0 END) as initiated,
                     SUM(CASE WHEN t.is_initiator = 0 THEN 1 ELSE 0 END) as received,
+                    SUM(CASE WHEN t.status = 'confirmed' AND t.confirmed_at >= ? THEN 1 ELSE 0 END) as new_confirmed,
                     COALESCE(w.warning_count, 0) as warning_count,
                     CASE WHEN s.user_id IS NOT NULL THEN 1 ELSE 0 END as is_scammer
                 FROM (
-                    SELECT initiator_id as user_id, status, 1 as is_initiator FROM trades
+                    SELECT initiator_id as user_id, status, confirmed_at, 1 as is_initiator FROM trades
                     UNION ALL
-                    SELECT recipient_id as user_id, status, 0 as is_initiator FROM trades
+                    SELECT recipient_id as user_id, status, confirmed_at, 0 as is_initiator FROM trades
                 ) t
                 LEFT JOIN (
                     SELECT user_id, COUNT(*) as warning_count FROM user_warnings GROUP BY user_id
@@ -373,7 +408,7 @@ function init(db) {
                 LEFT JOIN scammer_list s ON t.user_id = s.user_id
                 GROUP BY t.user_id
                 ORDER BY total_trades DESC
-            `, [], (err, rows) => err ? reject(err) : resolve(rows));
+            `, [sinceTs || '1970-01-01T00:00:00.000Z'], (err, rows) => err ? reject(err) : resolve(rows));
         });
 
         if (!rows.length) {
@@ -382,14 +417,16 @@ function init(db) {
 
         const userMap = await buildUserMap(interaction.client, rows.map(r => r.user_id));
 
-        const csv = 'username,user_id,total_trades,confirmed,rejected,cancelled,pending,initiated,received,success_rate_pct,warning_count,is_scammer\n'
+        const csv = 'username,user_id,total_trades,confirmed,rejected,cancelled,pending,initiated,received,new_confirmed,success_rate_pct,warning_count,is_scammer\n'
             + rows.map(r => {
                 const successRate = r.total_trades > 0 ? ((r.confirmed / r.total_trades) * 100).toFixed(1) : '0.0';
-                return [csvCell(userMap.get(r.user_id)), r.user_id, r.total_trades, r.confirmed, r.rejected, r.cancelled, r.pending, r.initiated, r.received, successRate, r.warning_count, r.is_scammer].join(',');
+                return [csvCell(userMap.get(r.user_id)), r.user_id, r.total_trades, r.confirmed, r.rejected, r.cancelled, r.pending, r.initiated, r.received, r.new_confirmed, successRate, r.warning_count, r.is_scammer].join(',');
             }).join('\n');
 
+        await setConfig('last_export_at', new Date().toISOString());
+
         const attachment = new AttachmentBuilder(Buffer.from(csv, 'utf-8'), { name: 'trade_stats_full.csv' });
-        await interaction.editReply({ content: `📊 Full trade stats — ${rows.length} users`, files: [attachment] });
+        await interaction.editReply({ content: `📊 Full trade stats — ${rows.length} users (new trades ${sinceLabel})`, files: [attachment] });
     }
 
     async function showResolveActions(interaction, reportId) {
