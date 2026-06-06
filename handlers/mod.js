@@ -1,4 +1,4 @@
-const { EmbedBuilder, AttachmentBuilder } = require('discord.js');
+const { EmbedBuilder, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 function init(db) {
     async function checkModeratorPermission(interaction) {
@@ -25,7 +25,7 @@ function init(db) {
             params.push(status);
         }
 
-        query += ' ORDER BY tr.created_at DESC LIMIT 10';
+        query += ' ORDER BY tr.created_at DESC LIMIT 5';
 
         const reports = await new Promise((resolve, reject) => {
             db.all(query, params, (err, rows) => {
@@ -59,9 +59,16 @@ function init(db) {
             });
         }
 
-        embed.setFooter({ text: 'Use /mod action:resolve id:<reportid> reason:<action> to handle reports' });
+        const row = new ActionRowBuilder().addComponents(
+            reports.map(report =>
+                new ButtonBuilder()
+                    .setCustomId(`mod_resolve_${report.id}`)
+                    .setLabel(`Resolve #${report.id}`)
+                    .setStyle(ButtonStyle.Primary)
+            )
+        );
 
-        await interaction.reply({ embeds: [embed] });
+        await interaction.reply({ embeds: [embed], components: [row] });
     }
 
     async function resolveTradeReport(interaction, reportId, action) {
@@ -385,7 +392,141 @@ function init(db) {
         await interaction.editReply({ content: `📊 Full trade stats — ${rows.length} users`, files: [attachment] });
     }
 
-    return { checkModeratorPermission, showModeratedTrades, resolveTradeReport, deleteTrade, showUserWarnings, markScammer, unmarkScammer, exportTradeSummary, exportFullStats };
+    async function showResolveActions(interaction, reportId) {
+        const report = await new Promise((resolve, reject) => {
+            db.get(`
+                SELECT tr.*, t.initiator_id, t.recipient_id, t.description, t.status as trade_status
+                FROM trade_reports tr
+                LEFT JOIN trades t ON tr.trade_id = t.id
+                WHERE tr.id = ?
+            `, [reportId], (err, row) => err ? reject(err) : resolve(row));
+        });
+
+        if (!report) return interaction.reply({ content: '❌ Report not found!', ephemeral: true });
+        if (report.status === 'resolved') return interaction.reply({ content: '❌ Already resolved.', ephemeral: true });
+
+        const tradeLabel = report.trade_id === 0 ? 'User Report' : `Trade #${report.trade_id}`;
+        const isUserReport = report.trade_id === 0;
+
+        const embed = new EmbedBuilder()
+            .setTitle(`🛡️ Resolve Report #${reportId}`)
+            .addFields(
+                { name: 'Reported User', value: `<@${report.reported_user_id}>`, inline: true },
+                { name: 'Reporter', value: `<@${report.reporter_id}>`, inline: true },
+                { name: 'Type', value: tradeLabel, inline: true },
+                { name: 'Reason', value: report.reason, inline: false }
+            )
+            .setColor('#ff9900');
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`mod_action_${reportId}_dismiss`)
+                .setLabel('Dismiss')
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId(`mod_action_${reportId}_cancel`)
+                .setLabel('Cancel Trade')
+                .setStyle(ButtonStyle.Primary)
+                .setDisabled(isUserReport),
+            new ButtonBuilder()
+                .setCustomId(`mod_action_${reportId}_warn`)
+                .setLabel('Warn User')
+                .setStyle(ButtonStyle.Danger),
+            new ButtonBuilder()
+                .setCustomId(`mod_action_${reportId}_mark_scammer`)
+                .setLabel('Mark Scammer')
+                .setStyle(ButtonStyle.Danger)
+        );
+
+        await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+    }
+
+    async function handleResolveAction(interaction, reportId, action) {
+        const moderatorId = interaction.user.id;
+        const guildId = interaction.guild.id;
+
+        const report = await new Promise((resolve, reject) => {
+            db.get(`
+                SELECT tr.*, t.initiator_id, t.recipient_id, t.description, t.status as trade_status
+                FROM trade_reports tr
+                LEFT JOIN trades t ON tr.trade_id = t.id
+                WHERE tr.id = ?
+            `, [reportId], (err, row) => err ? reject(err) : resolve(row));
+        });
+
+        if (!report) return interaction.update({ content: '❌ Report not found!', embeds: [], components: [] });
+        if (report.status === 'resolved') return interaction.update({ content: '❌ Already resolved.', embeds: [], components: [] });
+
+        let actionDescription = '';
+
+        if (action === 'dismiss') {
+            actionDescription = 'Report dismissed — no action taken';
+        } else if (action === 'cancel') {
+            if (report.trade_id) {
+                await new Promise((resolve, reject) => {
+                    db.run('UPDATE trades SET status = "cancelled" WHERE id = ?', [report.trade_id], (err) => err ? reject(err) : resolve());
+                });
+            }
+            actionDescription = 'Trade cancelled';
+        } else if (action === 'warn') {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO user_warnings (user_id, moderator_id, reason, guild_id) VALUES (?, ?, ?, ?)',
+                    [report.reported_user_id, moderatorId, `Trade report: ${report.reason}`, guildId],
+                    (err) => err ? reject(err) : resolve()
+                );
+            });
+            if (report.trade_id) {
+                await new Promise((resolve, reject) => {
+                    db.run('UPDATE trades SET status = "cancelled" WHERE id = ?', [report.trade_id], (err) => err ? reject(err) : resolve());
+                });
+            }
+            actionDescription = 'User warned and trade cancelled';
+        } else if (action === 'mark_scammer') {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT OR REPLACE INTO scammer_list (user_id, moderator_id, reason, guild_id) VALUES (?, ?, ?, ?)',
+                    [report.reported_user_id, moderatorId, `Trade report: ${report.reason}`, guildId],
+                    (err) => err ? reject(err) : resolve()
+                );
+            });
+            await new Promise((resolve, reject) => {
+                db.run(
+                    'INSERT INTO user_warnings (user_id, moderator_id, reason, guild_id) VALUES (?, ?, ?, ?)',
+                    [report.reported_user_id, moderatorId, `Marked as scammer via trade report: ${report.reason}`, guildId],
+                    (err) => err ? reject(err) : resolve()
+                );
+            });
+            if (report.trade_id) {
+                await new Promise((resolve, reject) => {
+                    db.run('UPDATE trades SET status = "cancelled" WHERE id = ?', [report.trade_id], (err) => err ? reject(err) : resolve());
+                });
+            }
+            actionDescription = 'User marked as scammer, warned, and trade cancelled';
+        }
+
+        const now = new Date().toISOString();
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE trade_reports SET status = "resolved", resolved_at = ?, resolved_by = ? WHERE id = ?',
+                [now, moderatorId, reportId],
+                (err) => err ? reject(err) : resolve()
+            );
+        });
+
+        const embed = new EmbedBuilder()
+            .setTitle('✅ Report Resolved')
+            .addFields(
+                { name: 'Report ID', value: `#${reportId}`, inline: true },
+                { name: 'Action Taken', value: actionDescription, inline: false },
+                { name: 'Resolved By', value: `<@${moderatorId}>`, inline: true }
+            )
+            .setColor('#00ff00');
+
+        await interaction.update({ embeds: [embed], components: [] });
+    }
+
+    return { checkModeratorPermission, showModeratedTrades, resolveTradeReport, deleteTrade, showUserWarnings, markScammer, unmarkScammer, exportTradeSummary, exportFullStats, showResolveActions, handleResolveAction };
 }
 
 module.exports = init;

@@ -1,4 +1,4 @@
-const { EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
+const { EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 function init(db) {
     async function reportTrade(interaction, tradeId, reason, description) {
@@ -79,7 +79,7 @@ function init(db) {
             modLogEmbed.addFields({ name: 'Report Details', value: description, inline: false });
         }
 
-        await sendToModChannel(interaction, modLogEmbed);
+        await sendToModChannel(interaction, modLogEmbed, reportId, false);
     }
 
     async function reportUser(interaction, user, reason, description) {
@@ -138,7 +138,7 @@ function init(db) {
             modLogEmbed.addFields({ name: 'Report Details', value: description, inline: false });
         }
 
-        await sendToModChannel(interaction, modLogEmbed);
+        await sendToModChannel(interaction, modLogEmbed, reportId, true);
     }
 
     async function handleReportButton(interaction, tradeId, userId) {
@@ -203,12 +203,32 @@ function init(db) {
         await reportTrade(interaction, parseInt(tradeId), reason, description);
     }
 
-    async function sendToModChannel(interaction, embed) {
+    async function sendToModChannel(interaction, embed, reportId, isUserReport = false) {
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`mod_action_${reportId}_dismiss`)
+                .setLabel('Dismiss')
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId(`mod_action_${reportId}_cancel`)
+                .setLabel('Cancel Trade')
+                .setStyle(ButtonStyle.Primary)
+                .setDisabled(isUserReport),
+            new ButtonBuilder()
+                .setCustomId(`mod_action_${reportId}_warn`)
+                .setLabel('Warn User')
+                .setStyle(ButtonStyle.Danger),
+            new ButtonBuilder()
+                .setCustomId(`mod_action_${reportId}_mark_scammer`)
+                .setLabel('Mark Scammer')
+                .setStyle(ButtonStyle.Danger)
+        );
+
         const modChannels = ['mod-logs', 'modlog', 'staff-logs', 'reports'];
         for (const channelName of modChannels) {
             const channel = interaction.guild.channels.cache.find(ch => ch.name === channelName && ch.type === 0);
             if (channel) {
-                await channel.send({ embeds: [embed] }).catch(() => {});
+                await channel.send({ embeds: [embed], components: [row] }).catch(() => {});
                 break;
             }
         }
