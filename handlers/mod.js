@@ -51,10 +51,12 @@ function init(db) {
 
         for (const report of reports) {
             const statusEmoji = report.status === 'pending' ? '⏳' : '✅';
-            const createdTimestamp = Math.floor(new Date(report.created_at + 'Z').getTime() / 1000);
+            const createdAt = report.created_at.endsWith('Z') ? report.created_at : report.created_at.replace(' ', 'T') + 'Z';
+            const createdTimestamp = Math.floor(new Date(createdAt).getTime() / 1000);
+            const tradeLabel = report.trade_id === 0 ? 'User Report' : `Trade #${report.trade_id}`;
 
             embed.addFields({
-                name: `${statusEmoji} Report #${report.id} - Trade #${report.trade_id}`,
+                name: `${statusEmoji} Report #${report.id} - ${tradeLabel}`,
                 value: `**Reporter:** <@${report.reporter_id}>\n**Reported:** <@${report.reported_user_id}>\n**Reason:** ${report.reason}\n**Created:** <t:${createdTimestamp}:R>`,
                 inline: false
             });
