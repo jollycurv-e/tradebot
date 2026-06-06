@@ -7,8 +7,8 @@ function init(db) {
 
         const trade = await new Promise((resolve, reject) => {
             db.get(
-                'SELECT * FROM trades WHERE id = ? AND guild_id = ?',
-                [tradeId, guildId],
+                'SELECT * FROM trades WHERE id = ?',
+                [tradeId],
                 (err, row) => err ? reject(err) : resolve(row)
             );
         });
@@ -144,8 +144,8 @@ function init(db) {
     async function handleReportButton(interaction, tradeId, userId) {
         const trade = await new Promise((resolve, reject) => {
             db.get(
-                'SELECT * FROM trades WHERE id = ? AND guild_id = ?',
-                [tradeId, interaction.guild.id],
+                'SELECT * FROM trades WHERE id = ?',
+                [tradeId],
                 (err, row) => err ? reject(err) : resolve(row)
             );
         });

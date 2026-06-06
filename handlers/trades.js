@@ -18,15 +18,15 @@ function init(db) {
         const scammerCheck = await Promise.all([
             new Promise((resolve, reject) => {
                 db.get(
-                    'SELECT * FROM scammer_list WHERE user_id = ? AND guild_id = ?',
-                    [author.id, guild.id],
+                    'SELECT * FROM scammer_list WHERE user_id = ?',
+                    [author.id],
                     (err, row) => err ? reject(err) : resolve(row)
                 );
             }),
             new Promise((resolve, reject) => {
                 db.get(
-                    'SELECT * FROM scammer_list WHERE user_id = ? AND guild_id = ?',
-                    [withUser.id, guild.id],
+                    'SELECT * FROM scammer_list WHERE user_id = ?',
+                    [withUser.id],
                     (err, row) => err ? reject(err) : resolve(row)
                 );
             })
@@ -251,16 +251,14 @@ function init(db) {
     }
 
     async function showTrades(context, user) {
-        const guildId = context.guild.id;
-
         const trades = await new Promise((resolve, reject) => {
             db.all(`
                 SELECT id, initiator_id, recipient_id, description, status, created_at, confirmed_at, expires_at
                 FROM trades
-                WHERE (initiator_id = ? OR recipient_id = ?) AND guild_id = ?
+                WHERE initiator_id = ? OR recipient_id = ?
                 ORDER BY created_at DESC
                 LIMIT 10
-            `, [user.id, user.id, guildId], (err, rows) => {
+            `, [user.id, user.id], (err, rows) => {
                 err ? reject(err) : resolve(rows);
             });
         });
@@ -297,18 +295,16 @@ function init(db) {
     }
 
     async function showTradeStats(context, user) {
-        const guildId = context.guild.id;
-
         const stats = await new Promise((resolve, reject) => {
             db.get(`
                 SELECT
                     COUNT(*) as total_trades,
-                    SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed_trades,
-                    SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected_trades,
-                    SUM(CASE WHEN initiator_id = ? THEN 1 ELSE 0 END) as initiated_trades
+                    COALESCE(SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END), 0) as confirmed_trades,
+                    COALESCE(SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END), 0) as rejected_trades,
+                    COALESCE(SUM(CASE WHEN initiator_id = ? THEN 1 ELSE 0 END), 0) as initiated_trades
                 FROM trades
-                WHERE (initiator_id = ? OR recipient_id = ?) AND guild_id = ?
-            `, [user.id, user.id, user.id, guildId], (err, row) => {
+                WHERE initiator_id = ? OR recipient_id = ?
+            `, [user.id, user.id, user.id], (err, row) => {
                 err ? reject(err) : resolve(row);
             });
         });
@@ -322,27 +318,27 @@ function init(db) {
                     END as partner_id,
                     COUNT(*) as trade_count
                 FROM trades
-                WHERE (initiator_id = ? OR recipient_id = ?) AND guild_id = ? AND status = 'confirmed'
+                WHERE (initiator_id = ? OR recipient_id = ?) AND status = 'confirmed'
                 GROUP BY partner_id
                 ORDER BY trade_count DESC
                 LIMIT 3
-            `, [user.id, user.id, user.id, guildId], (err, rows) => {
+            `, [user.id, user.id, user.id], (err, rows) => {
                 err ? reject(err) : resolve(rows);
             });
         });
 
         const warnings = await new Promise((resolve, reject) => {
             db.all(
-                'SELECT * FROM user_warnings WHERE user_id = ? AND guild_id = ? ORDER BY created_at DESC LIMIT 5',
-                [user.id, guildId],
+                'SELECT * FROM user_warnings WHERE user_id = ? ORDER BY created_at DESC LIMIT 5',
+                [user.id],
                 (err, rows) => err ? reject(err) : resolve(rows)
             );
         });
 
         const scammerStatus = await new Promise((resolve, reject) => {
             db.get(
-                'SELECT * FROM scammer_list WHERE user_id = ? AND guild_id = ?',
-                [user.id, guildId],
+                'SELECT * FROM scammer_list WHERE user_id = ?',
+                [user.id],
                 (err, row) => err ? reject(err) : resolve(row)
             );
         });

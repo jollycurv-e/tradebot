@@ -1,7 +1,10 @@
+if (process.argv.includes('--debug')) process.env.DEBUG = '1';
+
 const { Client, GatewayIntentBits, SlashCommandBuilder } = require('discord.js');
 require('dotenv').config();
 
 const { setupDatabase } = require('./database');
+const { debug } = require('./utils');
 const initTrades = require('./handlers/trades');
 const initReports = require('./handlers/reports');
 const initMod = require('./handlers/mod');
@@ -39,17 +42,27 @@ class TraderBot {
         });
 
         this.client.on('interactionCreate', async (interaction) => {
-            if (interaction.isButton()) {
-                const [action, tradeId] = interaction.customId.split('_');
-                if (action === 'report') {
-                    await this.reports.handleReportButton(interaction, tradeId, interaction.user.id);
+            try {
+                if (interaction.isButton()) {
+                    debug(`Button interaction from ${interaction.user.tag}: customId=${interaction.customId} guild=${interaction.guild?.id}`);
+                    const [action, tradeId] = interaction.customId.split('_');
+                    if (action === 'report') {
+                        await this.reports.handleReportButton(interaction, tradeId, interaction.user.id);
+                    } else {
+                        await this.trades.handleButtonInteraction(interaction);
+                    }
+                } else if (interaction.isChatInputCommand()) {
+                    debug(`Slash command from ${interaction.user.tag}: /${interaction.commandName} guild=${interaction.guild?.id}`);
+                    debug(`Options: ${JSON.stringify(interaction.options.data)}`);
+                    await this.handleSlashCommand(interaction);
+                } else if (interaction.isModalSubmit()) {
+                    debug(`Modal submit from ${interaction.user.tag}: customId=${interaction.customId}`);
+                    await this.reports.handleModalSubmit(interaction);
                 } else {
-                    await this.trades.handleButtonInteraction(interaction);
+                    debug(`Unhandled interaction type: ${interaction.type} from ${interaction.user.tag}`);
                 }
-            } else if (interaction.isChatInputCommand()) {
-                await this.handleSlashCommand(interaction);
-            } else if (interaction.isModalSubmit()) {
-                await this.reports.handleModalSubmit(interaction);
+            } catch (error) {
+                console.error(`[Error] Unhandled exception in interactionCreate:`, error);
             }
         });
     }
@@ -132,7 +145,9 @@ class TraderBot {
                             { name: 'Delete Trade', value: 'delete' },
                             { name: 'View Warnings', value: 'warnings' },
                             { name: 'Mark Scammer', value: 'scammer' },
-                            { name: 'Remove Scammer Mark', value: 'unscammer' }
+                            { name: 'Remove Scammer Mark', value: 'unscammer' },
+                            { name: 'Export Summary CSV', value: 'export_summary' },
+                            { name: 'Export Full Stats CSV', value: 'export_full' }
                         ))
                 .addUserOption(option =>
                     option.setName('user')
@@ -161,8 +176,15 @@ class TraderBot {
         ];
 
         try {
-            await this.client.application.commands.set(commands);
-            console.log('✅ Successfully reloaded global application (/) commands.');
+            const guildId = process.env.GUILD_ID;
+            if (guildId) {
+                const guild = this.client.guilds.cache.get(guildId);
+                await guild.commands.set(commands);
+                console.log(`✅ Successfully reloaded guild application (/) commands for ${guild.name}.`);
+            } else {
+                await this.client.application.commands.set(commands);
+                console.log('✅ Successfully reloaded global application (/) commands.');
+            }
         } catch (error) {
             console.error('Error registering slash commands:', error);
         }
@@ -246,6 +268,12 @@ class TraderBot {
                         return interaction.reply({ content: '❌ User is required!', ephemeral: true });
                     }
                     await this.mod.unmarkScammer(interaction, user);
+                    break;
+                case 'export_summary':
+                    await this.mod.exportTradeSummary(interaction);
+                    break;
+                case 'export_full':
+                    await this.mod.exportFullStats(interaction);
                     break;
                 default:
                     await interaction.reply({ content: '❌ Invalid moderation action!', ephemeral: true });

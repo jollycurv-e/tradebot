@@ -1,3 +1,7 @@
+function debug(...args) {
+    if (process.env.DEBUG) console.log('[DEBUG]', ...args);
+}
+
 async function reply(context, content) {
     if (context.deferred || context.replied) {
         return context.followUp(content);
@@ -8,4 +12,4 @@ async function reply(context, content) {
     }
 }
 
-module.exports = { reply };
+module.exports = { reply, debug };

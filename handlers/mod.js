@@ -1,4 +1,4 @@
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, AttachmentBuilder } = require('discord.js');
 
 function init(db) {
     async function checkModeratorPermission(interaction) {
@@ -13,18 +13,15 @@ function init(db) {
     }
 
     async function showModeratedTrades(interaction, status) {
-        const guildId = interaction.guild.id;
-
         let query = `
             SELECT tr.*, t.initiator_id, t.recipient_id, t.description, t.status as trade_status
             FROM trade_reports tr
             LEFT JOIN trades t ON tr.trade_id = t.id
-            WHERE tr.guild_id = ?
         `;
-        const params = [guildId];
+        const params = [];
 
         if (status !== 'all') {
-            query += ' AND tr.status = ?';
+            query += ' WHERE tr.status = ?';
             params.push(status);
         }
 
@@ -75,9 +72,9 @@ function init(db) {
             db.get(`
                 SELECT tr.*, t.initiator_id, t.recipient_id, t.description, t.status as trade_status
                 FROM trade_reports tr
-                JOIN trades t ON tr.trade_id = t.id
-                WHERE tr.id = ? AND tr.guild_id = ?
-            `, [reportId, guildId], (err, row) => {
+                LEFT JOIN trades t ON tr.trade_id = t.id
+                WHERE tr.id = ?
+            `, [reportId], (err, row) => {
                 err ? reject(err) : resolve(row);
             });
         });
@@ -137,12 +134,11 @@ function init(db) {
 
     async function deleteTrade(interaction, tradeId, reason) {
         const moderatorId = interaction.user.id;
-        const guildId = interaction.guild.id;
 
         const trade = await new Promise((resolve, reject) => {
             db.get(
-                'SELECT * FROM trades WHERE id = ? AND guild_id = ?',
-                [tradeId, guildId],
+                'SELECT * FROM trades WHERE id = ?',
+                [tradeId],
                 (err, row) => err ? reject(err) : resolve(row)
             );
         });
@@ -173,12 +169,10 @@ function init(db) {
     }
 
     async function showUserWarnings(interaction, user) {
-        const guildId = interaction.guild.id;
-
         const warnings = await new Promise((resolve, reject) => {
             db.all(
-                'SELECT * FROM user_warnings WHERE user_id = ? AND guild_id = ? ORDER BY created_at DESC',
-                [user.id, guildId],
+                'SELECT * FROM user_warnings WHERE user_id = ? ORDER BY created_at DESC',
+                [user.id],
                 (err, rows) => err ? reject(err) : resolve(rows)
             );
         });
@@ -240,12 +234,11 @@ function init(db) {
 
     async function unmarkScammer(interaction, user) {
         const moderatorId = interaction.user.id;
-        const guildId = interaction.guild.id;
 
         const scammer = await new Promise((resolve, reject) => {
             db.get(
-                'SELECT * FROM scammer_list WHERE user_id = ? AND guild_id = ?',
-                [user.id, guildId],
+                'SELECT * FROM scammer_list WHERE user_id = ?',
+                [user.id],
                 (err, row) => err ? reject(err) : resolve(row)
             );
         });
@@ -256,8 +249,8 @@ function init(db) {
 
         await new Promise((resolve, reject) => {
             db.run(
-                'DELETE FROM scammer_list WHERE user_id = ? AND guild_id = ?',
-                [user.id, guildId],
+                'DELETE FROM scammer_list WHERE user_id = ?',
+                [user.id],
                 (err) => err ? reject(err) : resolve()
             );
         });
@@ -274,7 +267,100 @@ function init(db) {
         await interaction.reply({ embeds: [embed] });
     }
 
-    return { checkModeratorPermission, showModeratedTrades, resolveTradeReport, deleteTrade, showUserWarnings, markScammer, unmarkScammer };
+    function csvCell(value) {
+        const str = String(value);
+        return str.includes(',') || str.includes('"') || str.includes('\n') ? `"${str.replace(/"/g, '""')}"` : str;
+    }
+
+    async function buildUserMap(client, userIds) {
+        const map = new Map();
+        await Promise.all([...new Set(userIds)].map(async id => {
+            const user = await client.users.fetch(id).catch(() => null);
+            map.set(id, user ? (user.globalName || user.username) : id);
+        }));
+        return map;
+    }
+
+    async function exportTradeSummary(interaction) {
+        await interaction.deferReply();
+        const rows = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT
+                    user_id,
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
+                    SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+                    SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
+                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending
+                FROM (
+                    SELECT initiator_id as user_id, status FROM trades
+                    UNION ALL
+                    SELECT recipient_id as user_id, status FROM trades
+                )
+                GROUP BY user_id
+                ORDER BY total_trades DESC
+            `, [], (err, rows) => err ? reject(err) : resolve(rows));
+        });
+
+        if (!rows.length) {
+            return interaction.editReply({ content: '❌ No trade data found.' });
+        }
+
+        const userMap = await buildUserMap(interaction.client, rows.map(r => r.user_id));
+
+        const csv = 'username,user_id,total_trades,confirmed,rejected,cancelled,pending\n'
+            + rows.map(r => [csvCell(userMap.get(r.user_id)), r.user_id, r.total_trades, r.confirmed, r.rejected, r.cancelled, r.pending].join(',')).join('\n');
+
+        const attachment = new AttachmentBuilder(Buffer.from(csv, 'utf-8'), { name: 'trade_summary.csv' });
+        await interaction.editReply({ content: `📊 Trade summary — ${rows.length} users`, files: [attachment] });
+    }
+
+    async function exportFullStats(interaction) {
+        await interaction.deferReply();
+        const rows = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT
+                    t.user_id,
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN t.status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
+                    SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+                    SUM(CASE WHEN t.status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
+                    SUM(CASE WHEN t.status = 'pending' THEN 1 ELSE 0 END) as pending,
+                    SUM(CASE WHEN t.is_initiator = 1 THEN 1 ELSE 0 END) as initiated,
+                    SUM(CASE WHEN t.is_initiator = 0 THEN 1 ELSE 0 END) as received,
+                    COALESCE(w.warning_count, 0) as warning_count,
+                    CASE WHEN s.user_id IS NOT NULL THEN 1 ELSE 0 END as is_scammer
+                FROM (
+                    SELECT initiator_id as user_id, status, 1 as is_initiator FROM trades
+                    UNION ALL
+                    SELECT recipient_id as user_id, status, 0 as is_initiator FROM trades
+                ) t
+                LEFT JOIN (
+                    SELECT user_id, COUNT(*) as warning_count FROM user_warnings GROUP BY user_id
+                ) w ON t.user_id = w.user_id
+                LEFT JOIN scammer_list s ON t.user_id = s.user_id
+                GROUP BY t.user_id
+                ORDER BY total_trades DESC
+            `, [], (err, rows) => err ? reject(err) : resolve(rows));
+        });
+
+        if (!rows.length) {
+            return interaction.editReply({ content: '❌ No trade data found.' });
+        }
+
+        const userMap = await buildUserMap(interaction.client, rows.map(r => r.user_id));
+
+        const csv = 'username,user_id,total_trades,confirmed,rejected,cancelled,pending,initiated,received,success_rate_pct,warning_count,is_scammer\n'
+            + rows.map(r => {
+                const successRate = r.total_trades > 0 ? ((r.confirmed / r.total_trades) * 100).toFixed(1) : '0.0';
+                return [csvCell(userMap.get(r.user_id)), r.user_id, r.total_trades, r.confirmed, r.rejected, r.cancelled, r.pending, r.initiated, r.received, successRate, r.warning_count, r.is_scammer].join(',');
+            }).join('\n');
+
+        const attachment = new AttachmentBuilder(Buffer.from(csv, 'utf-8'), { name: 'trade_stats_full.csv' });
+        await interaction.editReply({ content: `📊 Full trade stats — ${rows.length} users`, files: [attachment] });
+    }
+
+    return { checkModeratorPermission, showModeratedTrades, resolveTradeReport, deleteTrade, showUserWarnings, markScammer, unmarkScammer, exportTradeSummary, exportFullStats };
 }
 
 module.exports = init;

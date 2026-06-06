@@ -1,3 +1,4 @@
 .env
 trades.db
 node_modules/
+CLAUDE.md
