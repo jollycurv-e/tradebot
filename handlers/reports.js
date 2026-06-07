@@ -224,7 +224,7 @@ function init(db) {
                 .setStyle(ButtonStyle.Danger)
         );
 
-        const modChannels = ['mod-logs', 'modlog', 'staff-logs', 'reports'];
+        const modChannels = ['mod-logs', 'mod-log', 'modlogs', 'modlog', 'staff-logs', 'reports'];
         for (const channelName of modChannels) {
             const channel = interaction.guild.channels.cache.find(ch => ch.name === channelName && ch.type === 0);
             if (channel) {
