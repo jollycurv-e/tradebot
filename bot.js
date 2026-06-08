@@ -239,13 +239,13 @@ class TraderBot {
             if (type === 'trade') {
                 const tradeId = interaction.options.getInteger('tradeid');
                 if (!tradeId) {
-                    return interaction.reply({ content: '❌ Trade ID is required for trade reports!', ephemeral: true });
+                    return interaction.reply({ content: '❌ Trade ID is required for trade reports!', flags: 64 });
                 }
                 await this.reports.reportTrade(interaction, tradeId, reason, description);
             } else if (type === 'user') {
                 const user = interaction.options.getUser('user');
                 if (!user) {
-                    return interaction.reply({ content: '❌ User is required for user reports!', ephemeral: true });
+                    return interaction.reply({ content: '❌ User is required for user reports!', flags: 64 });
                 }
                 await this.reports.reportUser(interaction, user, reason, description);
             }
@@ -267,31 +267,31 @@ class TraderBot {
                     break;
                 case 'resolve':
                     if (!id || !reason) {
-                        return interaction.reply({ content: '❌ Report ID and action are required!', ephemeral: true });
+                        return interaction.reply({ content: '❌ Report ID and action are required!', flags: 64 });
                     }
                     await this.mod.resolveTradeReport(interaction, id, reason);
                     break;
                 case 'delete':
                     if (!id || !details) {
-                        return interaction.reply({ content: '❌ Trade ID and reason are required!', ephemeral: true });
+                        return interaction.reply({ content: '❌ Trade ID and reason are required!', flags: 64 });
                     }
                     await this.mod.deleteTrade(interaction, id, details);
                     break;
                 case 'warnings':
                     if (!user) {
-                        return interaction.reply({ content: '❌ User is required!', ephemeral: true });
+                        return interaction.reply({ content: '❌ User is required!', flags: 64 });
                     }
                     await this.mod.showUserWarnings(interaction, user);
                     break;
                 case 'scammer':
                     if (!user || !details) {
-                        return interaction.reply({ content: '❌ User and reason are required!', ephemeral: true });
+                        return interaction.reply({ content: '❌ User and reason are required!', flags: 64 });
                     }
                     await this.mod.markScammer(interaction, user, details);
                     break;
                 case 'unscammer':
                     if (!user) {
-                        return interaction.reply({ content: '❌ User is required!', ephemeral: true });
+                        return interaction.reply({ content: '❌ User is required!', flags: 64 });
                     }
                     await this.mod.unmarkScammer(interaction, user);
                     break;
@@ -302,7 +302,7 @@ class TraderBot {
                     await this.mod.exportFullStats(interaction, since);
                     break;
                 default:
-                    await interaction.reply({ content: '❌ Invalid moderation action!', ephemeral: true });
+                    await interaction.reply({ content: '❌ Invalid moderation action!', flags: 64 });
             }
         }
     }
