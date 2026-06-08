@@ -1,4 +1,5 @@
 const { EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { debug } = require('../utils.js');
 
 function init(db) {
     async function reportTrade(interaction, tradeId, reason, description) {
@@ -14,11 +15,11 @@ function init(db) {
         });
 
         if (!trade) {
-            return interaction.reply({ content: '❌ Trade not found!', ephemeral: true });
+            return interaction.reply({ content: '❌ Trade not found!', flags: 64 });
         }
 
         if (trade.initiator_id !== reporterId && trade.recipient_id !== reporterId) {
-            return interaction.reply({ content: '❌ You can only report trades you are involved in!', ephemeral: true });
+            return interaction.reply({ content: '❌ You can only report trades you are involved in!', flags: 64 });
         }
 
         const reportedUserId = trade.initiator_id === reporterId ? trade.recipient_id : trade.initiator_id;
@@ -32,7 +33,7 @@ function init(db) {
         });
 
         if (existingReport) {
-            return interaction.reply({ content: '❌ You have already reported this trade!', ephemeral: true });
+            return interaction.reply({ content: '❌ You have already reported this trade!', flags: 64 });
         }
 
         const reportId = await new Promise((resolve, reject) => {
@@ -61,7 +62,7 @@ function init(db) {
             embed.addFields({ name: '📝 Additional Details', value: description, inline: false });
         }
 
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await interaction.reply({ embeds: [embed], flags: 64 });
 
         const modLogEmbed = new EmbedBuilder()
             .setTitle('🚨 New Trade Report')
@@ -79,7 +80,11 @@ function init(db) {
             modLogEmbed.addFields({ name: 'Report Details', value: description, inline: false });
         }
 
-        await sendToModChannel(interaction, modLogEmbed, reportId, false);
+        const posted = await sendToModChannel(interaction, modLogEmbed, reportId, false);
+        if (!posted) {
+            await new Promise((resolve, reject) => db.run('DELETE FROM trade_reports WHERE id = ?', [reportId], err => err ? reject(err) : resolve()));
+            await interaction.followUp({ content: '❌ Your report could not be delivered to the moderation team — the bot lacks permission to post in the mod channel. Please contact a moderator directly.', flags: 64 });
+        }
     }
 
     async function reportUser(interaction, user, reason, description) {
@@ -87,11 +92,11 @@ function init(db) {
         const guildId = interaction.guild.id;
 
         if (user.id === reporterId) {
-            return interaction.reply({ content: '❌ You cannot report yourself!', ephemeral: true });
+            return interaction.reply({ content: '❌ You cannot report yourself!', flags: 64 });
         }
 
         if (user.bot) {
-            return interaction.reply({ content: '❌ You cannot report bots!', ephemeral: true });
+            return interaction.reply({ content: '❌ You cannot report bots!', flags: 64 });
         }
 
         const now = new Date().toISOString();
@@ -121,7 +126,7 @@ function init(db) {
             embed.addFields({ name: '📄 Additional Details', value: description, inline: false });
         }
 
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await interaction.reply({ embeds: [embed], flags: 64 });
 
         const modLogEmbed = new EmbedBuilder()
             .setTitle('🚨 New User Report')
@@ -138,7 +143,11 @@ function init(db) {
             modLogEmbed.addFields({ name: 'Report Details', value: description, inline: false });
         }
 
-        await sendToModChannel(interaction, modLogEmbed, reportId, true);
+        const posted = await sendToModChannel(interaction, modLogEmbed, reportId, true);
+        if (!posted) {
+            await new Promise((resolve, reject) => db.run('DELETE FROM trade_reports WHERE id = ?', [reportId], err => err ? reject(err) : resolve()));
+            await interaction.followUp({ content: '❌ Your report could not be delivered to the moderation team — the bot lacks permission to post in the mod channel. Please contact a moderator directly.', flags: 64 });
+        }
     }
 
     async function handleReportButton(interaction, tradeId, userId) {
@@ -151,11 +160,11 @@ function init(db) {
         });
 
         if (!trade) {
-            return interaction.reply({ content: '❌ Trade not found!', ephemeral: true });
+            return interaction.reply({ content: '❌ Trade not found!', flags: 64 });
         }
 
         if (trade.initiator_id !== userId && trade.recipient_id !== userId) {
-            return interaction.reply({ content: '❌ You can only report trades you are involved in!', ephemeral: true });
+            return interaction.reply({ content: '❌ You can only report trades you are involved in!', flags: 64 });
         }
 
         const modal = new ModalBuilder()
@@ -196,7 +205,7 @@ function init(db) {
         if (!validReasons.includes(reason)) {
             return interaction.reply({
                 content: '❌ Invalid reason! Use: scam, harassment, spam, inappropriate, or other',
-                ephemeral: true
+                flags: 64
             });
         }
 
@@ -225,13 +234,19 @@ function init(db) {
         );
 
         const modChannels = ['mod-logs', 'mod-log', 'modlogs', 'modlog', 'staff-logs', 'reports'];
+        let posted = false;
         for (const channelName of modChannels) {
             const channel = interaction.guild.channels.cache.find(ch => ch.name === channelName && ch.type === 0);
             if (channel) {
-                await channel.send({ embeds: [embed], components: [row] }).catch(() => {});
+                debug(`Found mod channel: #${channel.name} (${channel.id}), attempting send...`);
+                await channel.send({ embeds: [embed], components: [row] })
+                    .then(() => { debug(`Successfully posted report #${reportId} to #${channel.name}`); posted = true; })
+                    .catch(err => debug(`Failed to post report #${reportId} to #${channel.name}:`, err.message));
                 break;
             }
         }
+        if (!posted) debug(`No mod channel found in guild. Searched: ${modChannels.join(', ')}`);
+        return posted;
     }
 
     return { reportTrade, reportUser, handleReportButton, handleModalSubmit };

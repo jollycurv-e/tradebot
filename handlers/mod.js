@@ -5,7 +5,7 @@ function init(db) {
         if (!interaction.member.permissions.has('ManageMessages') && !interaction.member.permissions.has('Administrator')) {
             await interaction.reply({
                 content: '❌ You need "Manage Messages" or "Administrator" permissions to use moderation commands.',
-                ephemeral: true
+                flags: 64
             });
             return false;
         }
@@ -87,11 +87,11 @@ function init(db) {
         });
 
         if (!report) {
-            return interaction.reply({ content: '❌ Report not found!', ephemeral: true });
+            return interaction.reply({ content: '❌ Report not found!', flags: 64 });
         }
 
         if (report.status === 'resolved') {
-            return interaction.reply({ content: '❌ This report has already been resolved!', ephemeral: true });
+            return interaction.reply({ content: '❌ This report has already been resolved!', flags: 64 });
         }
 
         const now = new Date().toISOString();
@@ -176,7 +176,7 @@ function init(db) {
         });
 
         if (!trade) {
-            return interaction.reply({ content: '❌ Trade not found!', ephemeral: true });
+            return interaction.reply({ content: '❌ Trade not found!', flags: 64 });
         }
 
         await new Promise((resolve, reject) => {
@@ -260,7 +260,7 @@ function init(db) {
 
             await interaction.reply({ embeds: [embed] });
         } catch (error) {
-            await interaction.reply({ content: '❌ Error marking user as scammer.', ephemeral: true });
+            await interaction.reply({ content: '❌ Error marking user as scammer.', flags: 64 });
         }
     }
 
@@ -276,7 +276,7 @@ function init(db) {
         });
 
         if (!scammer) {
-            return interaction.reply({ content: '❌ This user is not marked as a scammer.', ephemeral: true });
+            return interaction.reply({ content: '❌ This user is not marked as a scammer.', flags: 64 });
         }
 
         await new Promise((resolve, reject) => {
@@ -439,8 +439,8 @@ function init(db) {
             `, [reportId], (err, row) => err ? reject(err) : resolve(row));
         });
 
-        if (!report) return interaction.reply({ content: '❌ Report not found!', ephemeral: true });
-        if (report.status === 'resolved') return interaction.reply({ content: '❌ Already resolved.', ephemeral: true });
+        if (!report) return interaction.reply({ content: '❌ Report not found!', flags: 64 });
+        if (report.status === 'resolved') return interaction.reply({ content: '❌ Already resolved.', flags: 64 });
 
         const tradeLabel = report.trade_id === 0 ? 'User Report' : `Trade #${report.trade_id}`;
         const isUserReport = report.trade_id === 0;
@@ -475,7 +475,7 @@ function init(db) {
                 .setStyle(ButtonStyle.Danger)
         );
 
-        await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+        await interaction.reply({ embeds: [embed], components: [row], flags: 64 });
     }
 
     async function handleResolveAction(interaction, reportId, action) {

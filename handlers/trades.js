@@ -122,7 +122,7 @@ function init(db) {
         });
 
         if (tradeInfo.status !== 'pending') {
-            return interaction.reply({ content: '❌ This trade is no longer pending and cannot be confirmed.', ephemeral: true });
+            return interaction.reply({ content: '❌ This trade is no longer pending and cannot be confirmed.', flags: 64 });
         }
 
         const existingConfirmation = await new Promise((resolve, reject) => {
@@ -134,7 +134,7 @@ function init(db) {
         });
 
         if (existingConfirmation && existingConfirmation.confirmed) {
-            return interaction.reply({ content: 'You have already confirmed this trade.', ephemeral: true });
+            return interaction.reply({ content: 'You have already confirmed this trade.', flags: 64 });
         }
 
         const now = new Date().toISOString();
@@ -199,7 +199,7 @@ function init(db) {
         });
 
         if (tradeInfo.status !== 'pending') {
-            return interaction.reply({ content: '❌ This trade is no longer pending and cannot be rejected.', ephemeral: true });
+            return interaction.reply({ content: '❌ This trade is no longer pending and cannot be rejected.', flags: 64 });
         }
 
         await new Promise((resolve, reject) => {
@@ -239,12 +239,12 @@ function init(db) {
 
         if (action === 'confirm') {
             if (userId !== recipientId) {
-                return interaction.reply({ content: 'Only the recipient can confirm this trade.', ephemeral: true });
+                return interaction.reply({ content: 'Only the recipient can confirm this trade.', flags: 64 });
             }
             await handleConfirm(interaction, tradeId, userId, initiatorId, recipientId);
         } else if (action === 'reject') {
             if (userId !== initiatorId && userId !== recipientId) {
-                return interaction.reply({ content: 'You cannot interact with this trade.', ephemeral: true });
+                return interaction.reply({ content: 'You cannot interact with this trade.', flags: 64 });
             }
             await handleReject(interaction, tradeId);
         }
