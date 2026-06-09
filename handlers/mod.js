@@ -221,6 +221,10 @@ function init(hub) {
 
     const usernameCache = new Map();
 
+    function isMcUuid(id) {
+        return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    }
+
     async function buildUserMap(client, userIds) {
         const map = new Map();
         await Promise.all([...new Set(userIds)].map(async id => {
@@ -228,8 +232,14 @@ function init(hub) {
                 map.set(id, usernameCache.get(id));
                 return;
             }
-            const user = await client.users.fetch(id).catch(() => null);
-            const name = user ? (user.globalName || user.username) : id;
+            let name;
+            if (isMcUuid(id)) {
+                const data = await hub.api('GET', `/tradebot/mc-username/${id}`).catch(() => null);
+                name = data?.username || id;
+            } else {
+                const user = await client.users.fetch(id).catch(() => null);
+                name = user ? (user.globalName || user.username) : id;
+            }
             usernameCache.set(id, name);
             map.set(id, name);
         }));
