@@ -301,34 +301,55 @@ function init(hub) {
 
     function listenForMcConfirms(discordClient) {
         const MC_CHANNEL_ID = 'minecraft';
-        hub.onMessage(async (payload) => {
-            if (payload.action !== 'trade_confirmed') return;
-            const trade = payload.data?.trade;
-            if (!trade || trade.channel_id !== MC_CHANNEL_ID) return;
 
+        async function resolveNames(trade) {
             let initiatorName = trade.initiator_id;
             let recipientName = trade.recipient_id;
             try { initiatorName = (await hub.api('GET', `/tradebot/mc-username/${trade.initiator_id}`)).username ?? initiatorName; } catch {}
             try { recipientName = (await hub.api('GET', `/tradebot/mc-username/${trade.recipient_id}`)).username ?? recipientName; } catch {}
+            return {
+                initiatorLink: `[${initiatorName}](https://namemc.com/profile/${trade.initiator_id})`,
+                recipientLink: `[${recipientName}](https://namemc.com/profile/${trade.recipient_id})`,
+            };
+        }
 
-            const initiatorLink = `[${initiatorName}](https://namemc.com/profile/${trade.initiator_id})`;
-            const recipientLink = `[${recipientName}](https://namemc.com/profile/${trade.recipient_id})`;
-
-            const embed = new EmbedBuilder()
-                .setTitle('✅ Trade Confirmed! (Minecraft)')
-                .setDescription(`A trade on \`${trade.guild_id}\` has been confirmed.`)
-                .addFields({
-                    name: 'Trade Details',
-                    value: `**Between:** ${initiatorLink} ↔️ ${recipientLink}\n**Description:** ${trade.description}\n**Confirmed:** <t:${Math.floor(Date.now() / 1000)}:R>`,
-                    inline: false
-                })
-                .setColor('#00ff00');
-
+        async function postToVerifiedTrades(embed) {
             for (const guild of discordClient.guilds.cache.values()) {
                 const channel = guild.channels.cache.find(ch => ch.name.includes('verified-trade') && ch.type === 0);
                 if (channel) {
                     try { await channel.send({ embeds: [embed] }); } catch {}
                 }
+            }
+        }
+
+        hub.onMessage(async (payload) => {
+            const trade = payload.data?.trade;
+            if (!trade || trade.channel_id !== MC_CHANNEL_ID) return;
+
+            if (payload.action === 'trade_confirmed') {
+                const { initiatorLink, recipientLink } = await resolveNames(trade);
+                const embed = new EmbedBuilder()
+                    .setTitle('✅ Trade Confirmed! (Minecraft)')
+                    .setDescription(`A trade on \`${trade.guild_id}\` has been confirmed.`)
+                    .addFields({
+                        name: 'Trade Details',
+                        value: `**Between:** ${initiatorLink} ↔️ ${recipientLink}\n**Description:** ${trade.description}\n**Confirmed:** <t:${Math.floor(Date.now() / 1000)}:R>`,
+                        inline: false
+                    })
+                    .setColor('#00ff00');
+                await postToVerifiedTrades(embed);
+            } else if (payload.action === 'trade_rejected') {
+                const { initiatorLink, recipientLink } = await resolveNames(trade);
+                const embed = new EmbedBuilder()
+                    .setTitle('❌ Trade Rejected (Minecraft)')
+                    .setDescription(`A trade on \`${trade.guild_id}\` has been rejected.`)
+                    .addFields({
+                        name: 'Trade Details',
+                        value: `**Between:** ${initiatorLink} ↔️ ${recipientLink}\n**Description:** ${trade.description}\n**Rejected:** <t:${Math.floor(Date.now() / 1000)}:R>`,
+                        inline: false
+                    })
+                    .setColor('#ff0000');
+                await postToVerifiedTrades(embed);
             }
         });
     }
