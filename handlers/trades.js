@@ -1,5 +1,5 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { reply } = require('../utils');
+const { reply, debug } = require('../utils');
 
 function toUnix(field) {
     if (!field) return null;
@@ -196,6 +196,27 @@ function init(hub) {
             return reply(context, { embeds: [embed] });
         }
 
+        const partnerIds = [...new Set(
+            trades.map(t => t.initiator_id === user.id ? t.recipient_id : t.initiator_id)
+                  .filter(id => !/^\d+$/.test(id))
+        )];
+        const nameMap = new Map();
+        await Promise.all(partnerIds.map(async id => {
+            try {
+                const data = await hub.api('GET', `/tradebot/mc-username/${id}`);
+                debug(`mc-username ${id} → ${JSON.stringify(data)}`);
+                if (data?.username) nameMap.set(id, data.username);
+            } catch (err) {
+                debug(`mc-username ${id} FAILED: ${err.message}`);
+            }
+        }));
+
+        function resolveId(id) {
+            if (/^\d+$/.test(id)) return `<@${id}>`;
+            const name = nameMap.get(id) || id;
+            return `[${name}](https://namemc.com/profile/${id})`;
+        }
+
         const embed = new EmbedBuilder()
             .setTitle(`📊 Trade History for ${user.displayName || user.username}`)
             .setDescription(`Showing last ${trades.length} trades`)
@@ -210,7 +231,7 @@ function init(hub) {
 
             embed.addFields({
                 name: `${statusEmoji} Trade #${trade.id} - ${trade.status.charAt(0).toUpperCase() + trade.status.slice(1)}`,
-                value: `**${role}** with ${formatUserId(otherUserId)}\n**Description:** ${trade.description}\n**Created:** <t:${createdTimestamp}:R>${confirmedInfo}`,
+                value: `**${role}** with ${resolveId(otherUserId)}\n**Description:** ${trade.description}\n**Created:** <t:${createdTimestamp}:R>${confirmedInfo}`,
                 inline: false
             });
         }

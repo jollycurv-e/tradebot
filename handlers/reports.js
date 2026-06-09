@@ -10,21 +10,47 @@ function init(hub) {
         const reporterId = interaction.user.id;
         const guildId = interaction.guild.id;
 
+        debug(`reportTrade: tradeId=${tradeId} reporterId=${reporterId}`);
+        try {
+            await interaction.deferReply({ flags: 64 });
+        } catch (err) {
+            if (err.code === 10062) {
+                debug('reportTrade: deferReply token expired (bot just started) — user should retry');
+                return;
+            }
+            throw err;
+        }
+
         let trade;
         try {
             trade = await hub.api('GET', `/tradebot/trade/${tradeId}`);
         } catch (err) {
             if (err.status === 404) {
-                return interaction.reply({ content: '❌ Trade not found!', flags: 64 });
+                return interaction.editReply({ content: '❌ Trade not found!' });
             }
             throw err;
         }
 
+        let effectiveReporterId = reporterId;
         if (trade.initiator_id !== reporterId && trade.recipient_id !== reporterId) {
-            return interaction.reply({ content: '❌ You can only report trades you are involved in!', flags: 64 });
+            let linkedMcUuid = null;
+            try {
+                const link = await hub.api('GET', `/tradebot/link/${reporterId}`);
+                debug(`link lookup ${reporterId} → ${JSON.stringify(link)}`);
+                linkedMcUuid = link?.link?.mc_uuid || null;
+            } catch (err) {
+                debug(`link lookup ${reporterId} FAILED: ${err.message}`);
+            }
+            debug(`trade parties: ${trade.initiator_id} / ${trade.recipient_id}, linkedMcUuid: ${linkedMcUuid}`);
+            if (linkedMcUuid && (trade.initiator_id === linkedMcUuid || trade.recipient_id === linkedMcUuid)) {
+                effectiveReporterId = linkedMcUuid;
+            } else {
+                debug(`reportTrade: not involved — linkedMcUuid=${linkedMcUuid}, parties=${trade.initiator_id}/${trade.recipient_id}`);
+                return interaction.editReply({ content: '❌ You can only report trades you are involved in!' });
+            }
         }
 
-        const reportedUserId = trade.initiator_id === reporterId ? trade.recipient_id : trade.initiator_id;
+        const reportedUserId = trade.initiator_id === effectiveReporterId ? trade.recipient_id : trade.initiator_id;
 
         let reportId;
         try {
@@ -39,10 +65,14 @@ function init(hub) {
             reportId = result.id;
         } catch (err) {
             if (err.status === 409) {
-                return interaction.reply({ content: '❌ You have already reported this trade!', flags: 64 });
+                return interaction.editReply({ content: '❌ You have already reported this trade!' });
             }
             throw err;
         }
+
+        const reportedDisplay = isMcUuid(reportedUserId)
+            ? await resolveMcDisplay(reportedUserId)
+            : `<@${reportedUserId}>`;
 
         const embed = new EmbedBuilder()
             .setTitle('📋 Trade Report Submitted')
@@ -50,7 +80,7 @@ function init(hub) {
             .addFields(
                 { name: '🔍 Trade ID', value: `#${tradeId}`, inline: true },
                 { name: '⚠️ Reason', value: reason, inline: true },
-                { name: '👤 Reported User', value: `<@${reportedUserId}>`, inline: true }
+                { name: '👤 Reported User', value: reportedDisplay, inline: true }
             )
             .setColor('#ff9900')
             .setFooter({ text: 'Moderators will review this report shortly' });
@@ -59,7 +89,7 @@ function init(hub) {
             embed.addFields({ name: '📝 Additional Details', value: description, inline: false });
         }
 
-        await interaction.reply({ embeds: [embed], flags: 64 });
+        await interaction.editReply({ embeds: [embed] });
 
         const modLogEmbed = new EmbedBuilder()
             .setTitle('🚨 New Trade Report')
@@ -67,7 +97,7 @@ function init(hub) {
             .addFields(
                 { name: 'Trade ID', value: `#${tradeId}`, inline: true },
                 { name: 'Reporter', value: `<@${reporterId}>`, inline: true },
-                { name: 'Reported User', value: `<@${reportedUserId}>`, inline: true },
+                { name: 'Reported User', value: reportedDisplay, inline: true },
                 { name: 'Reason', value: reason, inline: true },
                 { name: 'Trade Description', value: trade.description, inline: false }
             )

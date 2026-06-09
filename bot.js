@@ -43,7 +43,7 @@ class TraderBot {
                 this.reports.listenForMcReports(this.client);
 
                 console.log(`✅ ${this.client.user.tag} is ready!`);
-                await this.registerSlashCommands();
+                this.registerSlashCommands();
             } catch (error) {
                 console.error('Error setting up bot:', error);
             }
@@ -51,6 +51,13 @@ class TraderBot {
 
         this.client.on('interactionCreate', async (interaction) => {
             try {
+                const DISCORD_EPOCH = 1420070400000n;
+                const ageMs = Date.now() - Number((BigInt(interaction.id) >> 22n) + DISCORD_EPOCH);
+                if (ageMs > 2500) {
+                    debug(`Dropping stale interaction ${interaction.id} (${ageMs}ms old)`);
+                    return;
+                }
+
                 if (interaction.isButton()) {
                     debug(`Button interaction from ${interaction.user.tag}: customId=${interaction.customId} guild=${interaction.guild?.id}`);
                     const customId = interaction.customId;
