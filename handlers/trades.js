@@ -1,7 +1,13 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { reply } = require('../utils');
 
-function init(db) {
+function toUnix(field) {
+    if (!field) return null;
+    const ts = field.endsWith('Z') ? field : field.replace(' ', 'T') + 'Z';
+    return Math.floor(new Date(ts).getTime() / 1000);
+}
+
+function init(hub) {
     async function createTrade(context, withUser, description) {
         const author = context.user || context.author;
         const guild = context.guild;
@@ -10,34 +16,18 @@ function init(db) {
         if (withUser.id === author.id) {
             return reply(context, '❌ You cannot trade with yourself!');
         }
-
         if (withUser.bot) {
             return reply(context, '❌ You cannot trade with bots!');
         }
 
-        const scammerCheck = await Promise.all([
-            new Promise((resolve, reject) => {
-                db.get(
-                    'SELECT * FROM scammer_list WHERE user_id = ?',
-                    [author.id],
-                    (err, row) => err ? reject(err) : resolve(row)
-                );
-            }),
-            new Promise((resolve, reject) => {
-                db.get(
-                    'SELECT * FROM scammer_list WHERE user_id = ?',
-                    [withUser.id],
-                    (err, row) => err ? reject(err) : resolve(row)
-                );
-            })
+        const [{ scammer: initiatorScammer }, { scammer: recipientScammer }] = await Promise.all([
+            hub.api('GET', `/tradebot/user/${author.id}/scammer`),
+            hub.api('GET', `/tradebot/user/${withUser.id}/scammer`)
         ]);
-
-        const [initiatorScammer, recipientScammer] = scammerCheck;
 
         if (initiatorScammer) {
             return reply(context, '❌ You are marked as a scammer and cannot initiate trades!');
         }
-
         if (recipientScammer) {
             const warningEmbed = new EmbedBuilder()
                 .setTitle('⚠️ SCAMMER WARNING')
@@ -48,39 +38,17 @@ function init(db) {
                 )
                 .setColor('#ff0000')
                 .setFooter({ text: 'Proceed with extreme caution!' });
-
             return reply(context, { embeds: [warningEmbed] });
         }
 
-        const tradeId = await new Promise((resolve, reject) => {
-            db.run(
-                'INSERT INTO trades (initiator_id, recipient_id, description, guild_id, channel_id) VALUES (?, ?, ?, ?, ?)',
-                [author.id, withUser.id, description, guild.id, channel.id],
-                function(err) {
-                    if (err) reject(err);
-                    else resolve(this.lastID);
-                }
-            );
+        const { id: tradeId } = await hub.api('POST', '/tradebot/trade', {
+            initiator_id: author.id,
+            recipient_id: withUser.id,
+            description,
+            guild_id: guild.id,
+            channel_id: channel.id
         });
         console.log(`[Database] Trade #${tradeId} created by ${author.tag} for ${withUser.tag}`);
-
-        const now = new Date().toISOString();
-        await Promise.all([
-            new Promise((resolve, reject) => {
-                db.run(
-                    'INSERT INTO trade_confirmations (trade_id, user_id, confirmed, confirmed_at) VALUES (?, ?, TRUE, ?)',
-                    [tradeId, author.id, now],
-                    (err) => err ? reject(err) : resolve()
-                );
-            }),
-            new Promise((resolve, reject) => {
-                db.run(
-                    'INSERT INTO trade_confirmations (trade_id, user_id) VALUES (?, ?)',
-                    [tradeId, withUser.id],
-                    (err) => err ? reject(err) : resolve()
-                );
-            })
-        ]);
 
         const embed = new EmbedBuilder()
             .setTitle('📋 New Trade Proposal')
@@ -112,62 +80,27 @@ function init(db) {
         await reply(context, { content: `<@${author.id}> <@${withUser.id}>`, embeds: [embed], components: [row] });
     }
 
-    async function handleConfirm(interaction, tradeId, userId, initiatorId, recipientId) {
-        const tradeInfo = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT status FROM trades WHERE id = ?',
-                [tradeId],
-                (err, row) => err ? reject(err) : resolve(row)
-            );
-        });
-
-        if (tradeInfo.status !== 'pending') {
-            return interaction.reply({ content: '❌ This trade is no longer pending and cannot be confirmed.', flags: 64 });
+    async function handleConfirm(interaction, tradeId) {
+        let result;
+        try {
+            result = await hub.api('POST', `/tradebot/trade/${tradeId}/confirm`);
+        } catch (err) {
+            if (err.status === 404) {
+                return interaction.reply({ content: '❌ Trade not found.', flags: 64 });
+            }
+            if (err.status === 409) {
+                return interaction.reply({ content: `❌ ${err.message}`, flags: 64 });
+            }
+            throw err;
         }
 
-        const existingConfirmation = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT confirmed FROM trade_confirmations WHERE trade_id = ? AND user_id = ?',
-                [tradeId, userId],
-                (err, row) => err ? reject(err) : resolve(row)
-            );
-        });
-
-        if (existingConfirmation && existingConfirmation.confirmed) {
-            return interaction.reply({ content: 'You have already confirmed this trade.', flags: 64 });
-        }
-
-        const now = new Date().toISOString();
-        await new Promise((resolve, reject) => {
-            db.run(
-                'UPDATE trade_confirmations SET confirmed = TRUE, confirmed_at = ? WHERE trade_id = ? AND user_id = ?',
-                [now, tradeId, userId],
-                (err) => err ? reject(err) : resolve()
-            );
-        });
-
-        await new Promise((resolve, reject) => {
-            db.run(
-                'UPDATE trades SET status = "confirmed", confirmed_at = ? WHERE id = ?',
-                [now, tradeId],
-                (err) => err ? reject(err) : resolve()
-            );
-        });
-
-        const tradeDetails = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT initiator_id, recipient_id, description FROM trades WHERE id = ?',
-                [tradeId],
-                (err, row) => err ? reject(err) : resolve(row)
-            );
-        });
-
+        const t = result.trade;
         const embed = new EmbedBuilder()
             .setTitle('✅ Trade Confirmed!')
             .setDescription('This trade has been confirmed and finalized!')
             .addFields({
                 name: 'Trade Details',
-                value: `**Between:** <@${tradeDetails.initiator_id}> ↔️ <@${tradeDetails.recipient_id}>\n**Description:** ${tradeDetails.description}\n**Confirmed:** <t:${Math.floor(Date.now() / 1000)}:R>`,
+                value: `**Between:** <@${t.initiator_id}> ↔️ <@${t.recipient_id}>\n**Description:** ${t.description}\n**Confirmed:** <t:${Math.floor(Date.now() / 1000)}:R>`,
                 inline: false
             })
             .setColor('#00ff00');
@@ -190,25 +123,17 @@ function init(db) {
     }
 
     async function handleReject(interaction, tradeId) {
-        const tradeInfo = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT status FROM trades WHERE id = ?',
-                [tradeId],
-                (err, row) => err ? reject(err) : resolve(row)
-            );
-        });
-
-        if (tradeInfo.status !== 'pending') {
-            return interaction.reply({ content: '❌ This trade is no longer pending and cannot be rejected.', flags: 64 });
+        try {
+            await hub.api('POST', `/tradebot/trade/${tradeId}/reject`);
+        } catch (err) {
+            if (err.status === 404) {
+                return interaction.reply({ content: '❌ Trade not found.', flags: 64 });
+            }
+            if (err.status === 409) {
+                return interaction.reply({ content: '❌ This trade is no longer pending and cannot be rejected.', flags: 64 });
+            }
+            throw err;
         }
-
-        await new Promise((resolve, reject) => {
-            db.run(
-                'UPDATE trades SET status = "rejected" WHERE id = ?',
-                [tradeId],
-                (err) => err ? reject(err) : resolve()
-            );
-        });
 
         const embed = new EmbedBuilder()
             .setTitle('❌ Trade Rejected')
@@ -241,7 +166,7 @@ function init(db) {
             if (userId !== recipientId) {
                 return interaction.reply({ content: 'Only the recipient can confirm this trade.', flags: 64 });
             }
-            await handleConfirm(interaction, tradeId, userId, initiatorId, recipientId);
+            await handleConfirm(interaction, tradeId);
         } else if (action === 'reject') {
             if (userId !== initiatorId && userId !== recipientId) {
                 return interaction.reply({ content: 'You cannot interact with this trade.', flags: 64 });
@@ -251,17 +176,7 @@ function init(db) {
     }
 
     async function showTrades(context, user) {
-        const trades = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT id, initiator_id, recipient_id, description, status, created_at, confirmed_at, expires_at
-                FROM trades
-                WHERE initiator_id = ? OR recipient_id = ?
-                ORDER BY created_at DESC
-                LIMIT 10
-            `, [user.id, user.id], (err, rows) => {
-                err ? reject(err) : resolve(rows);
-            });
-        });
+        const trades = await hub.api('GET', `/tradebot/user/${user.id}/trades`);
 
         if (!trades.length) {
             const embed = new EmbedBuilder()
@@ -280,9 +195,8 @@ function init(db) {
             const otherUserId = trade.initiator_id === user.id ? trade.recipient_id : trade.initiator_id;
             const statusEmoji = { confirmed: '✅', rejected: '❌', cancelled: '⛔' }[trade.status] || '❓';
             const role = trade.initiator_id === user.id ? 'Initiator' : 'Recipient';
-
-            const createdTimestamp = Math.floor(new Date(trade.created_at.endsWith('Z') ? trade.created_at : trade.created_at + 'Z').getTime() / 1000);
-            const confirmedInfo = trade.confirmed_at ? `\n**Confirmed:** <t:${Math.floor(new Date(trade.confirmed_at.endsWith('Z') ? trade.confirmed_at : trade.confirmed_at + 'Z').getTime() / 1000)}:R>` : '';
+            const createdTimestamp = toUnix(trade.created_at);
+            const confirmedInfo = trade.confirmed_at ? `\n**Confirmed:** <t:${toUnix(trade.confirmed_at)}:R>` : '';
 
             embed.addFields({
                 name: `${statusEmoji} Trade #${trade.id} - ${trade.status.charAt(0).toUpperCase() + trade.status.slice(1)}`,
@@ -295,53 +209,7 @@ function init(db) {
     }
 
     async function showTradeStats(context, user) {
-        const stats = await new Promise((resolve, reject) => {
-            db.get(`
-                SELECT
-                    COUNT(*) as total_trades,
-                    COALESCE(SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END), 0) as confirmed_trades,
-                    COALESCE(SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END), 0) as rejected_trades,
-                    COALESCE(SUM(CASE WHEN initiator_id = ? THEN 1 ELSE 0 END), 0) as initiated_trades
-                FROM trades
-                WHERE initiator_id = ? OR recipient_id = ?
-            `, [user.id, user.id, user.id], (err, row) => {
-                err ? reject(err) : resolve(row);
-            });
-        });
-
-        const partners = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT
-                    CASE
-                        WHEN initiator_id = ? THEN recipient_id
-                        ELSE initiator_id
-                    END as partner_id,
-                    COUNT(*) as trade_count
-                FROM trades
-                WHERE (initiator_id = ? OR recipient_id = ?) AND status = 'confirmed'
-                GROUP BY partner_id
-                ORDER BY trade_count DESC
-                LIMIT 3
-            `, [user.id, user.id, user.id], (err, rows) => {
-                err ? reject(err) : resolve(rows);
-            });
-        });
-
-        const warnings = await new Promise((resolve, reject) => {
-            db.all(
-                'SELECT * FROM user_warnings WHERE user_id = ? ORDER BY created_at DESC LIMIT 5',
-                [user.id],
-                (err, rows) => err ? reject(err) : resolve(rows)
-            );
-        });
-
-        const scammerStatus = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT * FROM scammer_list WHERE user_id = ?',
-                [user.id],
-                (err, row) => err ? reject(err) : resolve(row)
-            );
-        });
+        const { stats, partners, warnings, scammerStatus } = await hub.api('GET', `/tradebot/user/${user.id}/trade-stats`);
 
         let embedColor = '#00ff00';
         if (scammerStatus) embedColor = '#ff0000';
@@ -378,19 +246,15 @@ function init(db) {
         }
 
         if (scammerStatus) {
-            const markedTimestamp = Math.floor(new Date(scammerStatus.marked_at + 'Z').getTime() / 1000);
             embed.addFields({
                 name: '🚨 SCAMMER WARNING',
-                value: `**Reason:** ${scammerStatus.reason}\n**Marked:** <t:${markedTimestamp}:R>\n**By:** <@${scammerStatus.moderator_id}>`,
+                value: `**Reason:** ${scammerStatus.reason}\n**Marked:** <t:${toUnix(scammerStatus.created_at)}:R>\n**By:** <@${scammerStatus.moderator_id}>`,
                 inline: false
             });
         }
 
         if (warnings.length > 0) {
-            const warningsList = warnings.slice(0, 3).map(w => {
-                const ts = Math.floor(new Date(w.created_at + 'Z').getTime() / 1000);
-                return `**${w.reason}** - <t:${ts}:R>`;
-            });
+            const warningsList = warnings.slice(0, 3).map(w => `**${w.reason}** - <t:${toUnix(w.created_at)}:R>`);
             embed.addFields({
                 name: `⚠️ Recent Warnings (${warnings.length} total)`,
                 value: warningsList.join('\n'),

@@ -1,21 +1,19 @@
 const { EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { debug } = require('../utils.js');
 
-function init(db) {
+function init(hub) {
     async function reportTrade(interaction, tradeId, reason, description) {
         const reporterId = interaction.user.id;
         const guildId = interaction.guild.id;
 
-        const trade = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT * FROM trades WHERE id = ?',
-                [tradeId],
-                (err, row) => err ? reject(err) : resolve(row)
-            );
-        });
-
-        if (!trade) {
-            return interaction.reply({ content: '❌ Trade not found!', flags: 64 });
+        let trade;
+        try {
+            trade = await hub.api('GET', `/tradebot/trade/${tradeId}`);
+        } catch (err) {
+            if (err.status === 404) {
+                return interaction.reply({ content: '❌ Trade not found!', flags: 64 });
+            }
+            throw err;
         }
 
         if (trade.initiator_id !== reporterId && trade.recipient_id !== reporterId) {
@@ -24,28 +22,23 @@ function init(db) {
 
         const reportedUserId = trade.initiator_id === reporterId ? trade.recipient_id : trade.initiator_id;
 
-        const existingReport = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT id FROM trade_reports WHERE trade_id = ? AND reporter_id = ?',
-                [tradeId, reporterId],
-                (err, row) => err ? reject(err) : resolve(row)
-            );
-        });
-
-        if (existingReport) {
-            return interaction.reply({ content: '❌ You have already reported this trade!', flags: 64 });
+        let reportId;
+        try {
+            const result = await hub.api('POST', '/tradebot/report', {
+                trade_id: tradeId,
+                reporter_id: reporterId,
+                reported_user_id: reportedUserId,
+                reason,
+                description,
+                guild_id: guildId
+            });
+            reportId = result.id;
+        } catch (err) {
+            if (err.status === 409) {
+                return interaction.reply({ content: '❌ You have already reported this trade!', flags: 64 });
+            }
+            throw err;
         }
-
-        const reportId = await new Promise((resolve, reject) => {
-            db.run(
-                'INSERT INTO trade_reports (trade_id, reporter_id, reported_user_id, reason, description, guild_id) VALUES (?, ?, ?, ?, ?, ?)',
-                [tradeId, reporterId, reportedUserId, reason, description, guildId],
-                function(err) {
-                    if (err) reject(err);
-                    else resolve(this.lastID);
-                }
-            );
-        });
 
         const embed = new EmbedBuilder()
             .setTitle('📋 Trade Report Submitted')
@@ -82,7 +75,7 @@ function init(db) {
 
         const posted = await sendToModChannel(interaction, modLogEmbed, reportId, false);
         if (!posted) {
-            await new Promise((resolve, reject) => db.run('DELETE FROM trade_reports WHERE id = ?', [reportId], err => err ? reject(err) : resolve()));
+            await hub.api('DELETE', `/tradebot/report/${reportId}`);
             await interaction.followUp({ content: '❌ Your report could not be delivered to the moderation team — the bot lacks permission to post in the mod channel. Please contact a moderator directly.', flags: 64 });
         }
     }
@@ -94,21 +87,17 @@ function init(db) {
         if (user.id === reporterId) {
             return interaction.reply({ content: '❌ You cannot report yourself!', flags: 64 });
         }
-
         if (user.bot) {
             return interaction.reply({ content: '❌ You cannot report bots!', flags: 64 });
         }
 
-        const now = new Date().toISOString();
-        const reportId = await new Promise((resolve, reject) => {
-            db.run(
-                'INSERT INTO trade_reports (trade_id, reporter_id, reported_user_id, reason, description, guild_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                [0, reporterId, user.id, reason, description, guildId, now],
-                function(err) {
-                    if (err) reject(err);
-                    else resolve(this.lastID);
-                }
-            );
+        const { id: reportId } = await hub.api('POST', '/tradebot/report', {
+            trade_id: null,
+            reporter_id: reporterId,
+            reported_user_id: user.id,
+            reason,
+            description,
+            guild_id: guildId
         });
 
         const embed = new EmbedBuilder()
@@ -145,22 +134,20 @@ function init(db) {
 
         const posted = await sendToModChannel(interaction, modLogEmbed, reportId, true);
         if (!posted) {
-            await new Promise((resolve, reject) => db.run('DELETE FROM trade_reports WHERE id = ?', [reportId], err => err ? reject(err) : resolve()));
+            await hub.api('DELETE', `/tradebot/report/${reportId}`);
             await interaction.followUp({ content: '❌ Your report could not be delivered to the moderation team — the bot lacks permission to post in the mod channel. Please contact a moderator directly.', flags: 64 });
         }
     }
 
     async function handleReportButton(interaction, tradeId, userId) {
-        const trade = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT * FROM trades WHERE id = ?',
-                [tradeId],
-                (err, row) => err ? reject(err) : resolve(row)
-            );
-        });
-
-        if (!trade) {
-            return interaction.reply({ content: '❌ Trade not found!', flags: 64 });
+        let trade;
+        try {
+            trade = await hub.api('GET', `/tradebot/trade/${tradeId}`);
+        } catch (err) {
+            if (err.status === 404) {
+                return interaction.reply({ content: '❌ Trade not found!', flags: 64 });
+            }
+            throw err;
         }
 
         if (trade.initiator_id !== userId && trade.recipient_id !== userId) {

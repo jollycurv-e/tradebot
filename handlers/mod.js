@@ -1,6 +1,13 @@
 const { EmbedBuilder, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { debug } = require('../utils.js');
 
-function init(db) {
+function toUnix(field) {
+    if (!field) return null;
+    const ts = field.endsWith('Z') ? field : field.replace(' ', 'T') + 'Z';
+    return Math.floor(new Date(ts).getTime() / 1000);
+}
+
+function init(hub) {
     async function checkModeratorPermission(interaction) {
         if (!interaction.member.permissions.has('ManageMessages') && !interaction.member.permissions.has('Administrator')) {
             await interaction.reply({
@@ -13,25 +20,7 @@ function init(db) {
     }
 
     async function showModeratedTrades(interaction, status) {
-        let query = `
-            SELECT tr.*, t.initiator_id, t.recipient_id, t.description, t.status as trade_status
-            FROM trade_reports tr
-            LEFT JOIN trades t ON tr.trade_id = t.id
-        `;
-        const params = [];
-
-        if (status !== 'all') {
-            query += ' WHERE tr.status = ?';
-            params.push(status);
-        }
-
-        query += ' ORDER BY tr.created_at DESC LIMIT 5';
-
-        const reports = await new Promise((resolve, reject) => {
-            db.all(query, params, (err, rows) => {
-                err ? reject(err) : resolve(rows);
-            });
-        });
+        const reports = await hub.api('GET', `/tradebot/reports?status=${status}`);
 
         if (!reports.length) {
             const embed = new EmbedBuilder()
@@ -48,9 +37,8 @@ function init(db) {
 
         for (const report of reports) {
             const statusEmoji = report.status === 'pending' ? '⏳' : '✅';
-            const createdAt = report.created_at.endsWith('Z') ? report.created_at : report.created_at.replace(' ', 'T') + 'Z';
-            const createdTimestamp = Math.floor(new Date(createdAt).getTime() / 1000);
-            const tradeLabel = report.trade_id === 0 ? 'User Report' : `Trade #${report.trade_id}`;
+            const createdTimestamp = toUnix(report.created_at);
+            const tradeLabel = !report.trade_id ? 'User Report' : `Trade #${report.trade_id}`;
 
             embed.addFields({
                 name: `${statusEmoji} Report #${report.id} - ${tradeLabel}`,
@@ -75,88 +63,29 @@ function init(db) {
         const moderatorId = interaction.user.id;
         const guildId = interaction.guild.id;
 
-        const report = await new Promise((resolve, reject) => {
-            db.get(`
-                SELECT tr.*, t.initiator_id, t.recipient_id, t.description, t.status as trade_status
-                FROM trade_reports tr
-                LEFT JOIN trades t ON tr.trade_id = t.id
-                WHERE tr.id = ?
-            `, [reportId], (err, row) => {
-                err ? reject(err) : resolve(row);
+        let result;
+        try {
+            result = await hub.api('POST', `/tradebot/report/${reportId}/resolve`, {
+                action,
+                moderator_id: moderatorId,
+                guild_id: guildId
             });
-        });
-
-        if (!report) {
-            return interaction.reply({ content: '❌ Report not found!', flags: 64 });
-        }
-
-        if (report.status === 'resolved') {
-            return interaction.reply({ content: '❌ This report has already been resolved!', flags: 64 });
-        }
-
-        const now = new Date().toISOString();
-        let actionDescription = '';
-
-        if (action === 'dismiss') {
-            actionDescription = 'Report dismissed - no action taken';
-        } else if (action === 'cancel') {
-            if (report.trade_id) {
-                await new Promise((resolve, reject) => {
-                    db.run('UPDATE trades SET status = "cancelled" WHERE id = ?', [report.trade_id], (err) => err ? reject(err) : resolve());
-                });
+        } catch (err) {
+            if (err.status === 404) {
+                return interaction.reply({ content: '❌ Report not found!', flags: 64 });
             }
-            actionDescription = 'Trade cancelled due to report';
-        } else if (action === 'warn') {
-            await new Promise((resolve, reject) => {
-                db.run(
-                    'INSERT INTO user_warnings (user_id, moderator_id, reason, guild_id) VALUES (?, ?, ?, ?)',
-                    [report.reported_user_id, moderatorId, `Trade report: ${report.reason}`, guildId],
-                    (err) => err ? reject(err) : resolve()
-                );
-            });
-            if (report.trade_id) {
-                await new Promise((resolve, reject) => {
-                    db.run('UPDATE trades SET status = "cancelled" WHERE id = ?', [report.trade_id], (err) => err ? reject(err) : resolve());
-                });
+            if (err.status === 409) {
+                return interaction.reply({ content: '❌ This report has already been resolved!', flags: 64 });
             }
-            actionDescription = 'User warned and trade cancelled';
-        } else if (action === 'mark_scammer') {
-            await new Promise((resolve, reject) => {
-                db.run(
-                    'INSERT OR REPLACE INTO scammer_list (user_id, moderator_id, reason, guild_id) VALUES (?, ?, ?, ?)',
-                    [report.reported_user_id, moderatorId, `Trade report: ${report.reason}`, guildId],
-                    (err) => err ? reject(err) : resolve()
-                );
-            });
-            await new Promise((resolve, reject) => {
-                db.run(
-                    'INSERT INTO user_warnings (user_id, moderator_id, reason, guild_id) VALUES (?, ?, ?, ?)',
-                    [report.reported_user_id, moderatorId, `Marked as scammer via trade report: ${report.reason}`, guildId],
-                    (err) => err ? reject(err) : resolve()
-                );
-            });
-            if (report.trade_id) {
-                await new Promise((resolve, reject) => {
-                    db.run('UPDATE trades SET status = "cancelled" WHERE id = ?', [report.trade_id], (err) => err ? reject(err) : resolve());
-                });
-            }
-            actionDescription = 'User marked as scammer, warned, and trade cancelled';
+            throw err;
         }
-
-        await new Promise((resolve, reject) => {
-            db.run(
-                'UPDATE trade_reports SET status = "resolved", resolved_at = ?, resolved_by = ? WHERE id = ?',
-                [now, moderatorId, reportId],
-                (err) => err ? reject(err) : resolve()
-            );
-        });
 
         const embed = new EmbedBuilder()
             .setTitle('✅ Report Resolved')
             .addFields(
                 { name: 'Report ID', value: `#${reportId}`, inline: true },
-                { name: 'Trade ID', value: `#${report.trade_id}`, inline: true },
-                { name: 'Action Taken', value: actionDescription, inline: false },
+                { name: 'Trade ID', value: `#${result.report.trade_id}`, inline: true },
+                { name: 'Action Taken', value: result.actionDescription, inline: false },
                 { name: 'Resolved By', value: `<@${moderatorId}>`, inline: true }
             )
             .setColor('#00ff00');
@@ -167,26 +96,17 @@ function init(db) {
     async function deleteTrade(interaction, tradeId, reason) {
         const moderatorId = interaction.user.id;
 
-        const trade = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT * FROM trades WHERE id = ?',
-                [tradeId],
-                (err, row) => err ? reject(err) : resolve(row)
-            );
-        });
-
-        if (!trade) {
-            return interaction.reply({ content: '❌ Trade not found!', flags: 64 });
+        let result;
+        try {
+            result = await hub.api('DELETE', `/tradebot/trade/${tradeId}`);
+        } catch (err) {
+            if (err.status === 404) {
+                return interaction.reply({ content: '❌ Trade not found!', flags: 64 });
+            }
+            throw err;
         }
 
-        await new Promise((resolve, reject) => {
-            db.run('DELETE FROM trade_confirmations WHERE trade_id = ?', [tradeId], (err) => err ? reject(err) : resolve());
-        });
-
-        await new Promise((resolve, reject) => {
-            db.run('DELETE FROM trades WHERE id = ?', [tradeId], (err) => err ? reject(err) : resolve());
-        });
-
+        const trade = result.trade;
         const embed = new EmbedBuilder()
             .setTitle('🗑️ Trade Deleted')
             .addFields(
@@ -201,13 +121,7 @@ function init(db) {
     }
 
     async function showUserWarnings(interaction, user) {
-        const warnings = await new Promise((resolve, reject) => {
-            db.all(
-                'SELECT * FROM user_warnings WHERE user_id = ? ORDER BY created_at DESC',
-                [user.id],
-                (err, rows) => err ? reject(err) : resolve(rows)
-            );
-        });
+        const warnings = await hub.api('GET', `/tradebot/user/${user.id}/warnings`);
 
         const embed = new EmbedBuilder()
             .setTitle(`⚠️ Warnings for ${user.displayName || user.username}`)
@@ -217,16 +131,13 @@ function init(db) {
             embed.setDescription('No warnings found for this user.');
         } else {
             embed.setDescription(`Total warnings: ${warnings.length}`);
-
             for (const warning of warnings.slice(0, 5)) {
-                const createdTimestamp = Math.floor(new Date(warning.created_at + 'Z').getTime() / 1000);
                 embed.addFields({
                     name: `Warning #${warning.id}`,
-                    value: `**Reason:** ${warning.reason}\n**By:** <@${warning.moderator_id}>\n**Date:** <t:${createdTimestamp}:R>`,
+                    value: `**Reason:** ${warning.reason}\n**By:** <@${warning.moderator_id}>\n**Date:** <t:${toUnix(warning.created_at)}:R>`,
                     inline: false
                 });
             }
-
             if (warnings.length > 5) {
                 embed.setFooter({ text: `Showing 5 of ${warnings.length} warnings` });
             }
@@ -240,12 +151,11 @@ function init(db) {
         const guildId = interaction.guild.id;
 
         try {
-            await new Promise((resolve, reject) => {
-                db.run(
-                    'INSERT OR REPLACE INTO scammer_list (user_id, moderator_id, reason, guild_id) VALUES (?, ?, ?, ?)',
-                    [user.id, moderatorId, reason, guildId],
-                    (err) => err ? reject(err) : resolve()
-                );
+            await hub.api('POST', '/tradebot/scammer', {
+                user_id: user.id,
+                moderator_id: moderatorId,
+                reason,
+                guild_id: guildId
             });
 
             const embed = new EmbedBuilder()
@@ -267,26 +177,17 @@ function init(db) {
     async function unmarkScammer(interaction, user) {
         const moderatorId = interaction.user.id;
 
-        const scammer = await new Promise((resolve, reject) => {
-            db.get(
-                'SELECT * FROM scammer_list WHERE user_id = ?',
-                [user.id],
-                (err, row) => err ? reject(err) : resolve(row)
-            );
-        });
-
-        if (!scammer) {
-            return interaction.reply({ content: '❌ This user is not marked as a scammer.', flags: 64 });
+        let result;
+        try {
+            result = await hub.api('DELETE', `/tradebot/scammer/${user.id}`);
+        } catch (err) {
+            if (err.status === 404) {
+                return interaction.reply({ content: '❌ This user is not marked as a scammer.', flags: 64 });
+            }
+            throw err;
         }
 
-        await new Promise((resolve, reject) => {
-            db.run(
-                'DELETE FROM scammer_list WHERE user_id = ?',
-                [user.id],
-                (err) => err ? reject(err) : resolve()
-            );
-        });
-
+        const scammer = result.scammer;
         const embed = new EmbedBuilder()
             .setTitle('✅ Scammer Mark Removed')
             .addFields(
@@ -300,15 +201,12 @@ function init(db) {
     }
 
     async function getConfig(key) {
-        return new Promise((resolve, reject) => {
-            db.get('SELECT value FROM config WHERE key = ?', [key], (err, row) => err ? reject(err) : resolve(row ? row.value : null));
-        });
+        const data = await hub.api('GET', `/tradebot/config/${key}`);
+        return data.value;
     }
 
     async function setConfig(key, value) {
-        return new Promise((resolve, reject) => {
-            db.run('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', [key, value], (err) => err ? reject(err) : resolve());
-        });
+        await hub.api('POST', '/tradebot/config', { key, value });
     }
 
     function parseSinceDate(since) {
@@ -321,11 +219,19 @@ function init(db) {
         return str.includes(',') || str.includes('"') || str.includes('\n') ? `"${str.replace(/"/g, '""')}"` : str;
     }
 
+    const usernameCache = new Map();
+
     async function buildUserMap(client, userIds) {
         const map = new Map();
         await Promise.all([...new Set(userIds)].map(async id => {
+            if (usernameCache.has(id)) {
+                map.set(id, usernameCache.get(id));
+                return;
+            }
             const user = await client.users.fetch(id).catch(() => null);
-            map.set(id, user ? (user.globalName || user.username) : id);
+            const name = user ? (user.globalName || user.username) : id;
+            usernameCache.set(id, name);
+            map.set(id, name);
         }));
         return map;
     }
@@ -333,31 +239,21 @@ function init(db) {
     async function exportTradeSummary(interaction, sinceInput) {
         await interaction.deferReply();
 
-        let sinceTs = sinceInput ? parseSinceDate(sinceInput) : await getConfig('last_export_at');
-        if (sinceInput && !sinceTs) {
-            return interaction.editReply({ content: '❌ Invalid date format. Use YYYY-MM-DD.' });
+        let sinceParam = '';
+        let sinceLabel;
+        if (sinceInput) {
+            if (!parseSinceDate(sinceInput)) {
+                return interaction.editReply({ content: '❌ Invalid date format. Use YYYY-MM-DD.' });
+            }
+            sinceParam = `?since=${encodeURIComponent(sinceInput)}`;
+            sinceLabel = `since ${sinceInput.slice(0, 10)}`;
         }
-        const sinceLabel = sinceTs ? `since ${sinceTs.slice(0, 10)}` : 'all time (no previous export)';
 
-        const rows = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT
-                    user_id,
-                    COUNT(*) as total_trades,
-                    SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
-                    SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-                    SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
-                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-                    SUM(CASE WHEN status = 'confirmed' AND confirmed_at >= ? THEN 1 ELSE 0 END) as new_confirmed
-                FROM (
-                    SELECT initiator_id as user_id, status, confirmed_at FROM trades
-                    UNION ALL
-                    SELECT recipient_id as user_id, status, confirmed_at FROM trades
-                )
-                GROUP BY user_id
-                ORDER BY total_trades DESC
-            `, [sinceTs || '1970-01-01T00:00:00.000Z'], (err, rows) => err ? reject(err) : resolve(rows));
-        });
+        const { rows, sinceTs } = await hub.api('GET', `/tradebot/export/summary${sinceParam}`);
+
+        if (!sinceLabel) {
+            sinceLabel = sinceTs ? `since ${sinceTs.slice(0, 10)}` : 'all time (no previous export)';
+        }
 
         if (!rows.length) {
             return interaction.editReply({ content: '❌ No trade data found.' });
@@ -377,39 +273,21 @@ function init(db) {
     async function exportFullStats(interaction, sinceInput) {
         await interaction.deferReply();
 
-        let sinceTs = sinceInput ? parseSinceDate(sinceInput) : await getConfig('last_export_at');
-        if (sinceInput && !sinceTs) {
-            return interaction.editReply({ content: '❌ Invalid date format. Use YYYY-MM-DD.' });
+        let sinceParam = '';
+        let sinceLabel;
+        if (sinceInput) {
+            if (!parseSinceDate(sinceInput)) {
+                return interaction.editReply({ content: '❌ Invalid date format. Use YYYY-MM-DD.' });
+            }
+            sinceParam = `?since=${encodeURIComponent(sinceInput)}`;
+            sinceLabel = `since ${sinceInput.slice(0, 10)}`;
         }
-        const sinceLabel = sinceTs ? `since ${sinceTs.slice(0, 10)}` : 'all time (no previous export)';
 
-        const rows = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT
-                    t.user_id,
-                    COUNT(*) as total_trades,
-                    SUM(CASE WHEN t.status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
-                    SUM(CASE WHEN t.status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-                    SUM(CASE WHEN t.status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
-                    SUM(CASE WHEN t.status = 'pending' THEN 1 ELSE 0 END) as pending,
-                    SUM(CASE WHEN t.is_initiator = 1 THEN 1 ELSE 0 END) as initiated,
-                    SUM(CASE WHEN t.is_initiator = 0 THEN 1 ELSE 0 END) as received,
-                    SUM(CASE WHEN t.status = 'confirmed' AND t.confirmed_at >= ? THEN 1 ELSE 0 END) as new_confirmed,
-                    COALESCE(w.warning_count, 0) as warning_count,
-                    CASE WHEN s.user_id IS NOT NULL THEN 1 ELSE 0 END as is_scammer
-                FROM (
-                    SELECT initiator_id as user_id, status, confirmed_at, 1 as is_initiator FROM trades
-                    UNION ALL
-                    SELECT recipient_id as user_id, status, confirmed_at, 0 as is_initiator FROM trades
-                ) t
-                LEFT JOIN (
-                    SELECT user_id, COUNT(*) as warning_count FROM user_warnings GROUP BY user_id
-                ) w ON t.user_id = w.user_id
-                LEFT JOIN scammer_list s ON t.user_id = s.user_id
-                GROUP BY t.user_id
-                ORDER BY total_trades DESC
-            `, [sinceTs || '1970-01-01T00:00:00.000Z'], (err, rows) => err ? reject(err) : resolve(rows));
-        });
+        const { rows, sinceTs } = await hub.api('GET', `/tradebot/export/full${sinceParam}`);
+
+        if (!sinceLabel) {
+            sinceLabel = sinceTs ? `since ${sinceTs.slice(0, 10)}` : 'all time (no previous export)';
+        }
 
         if (!rows.length) {
             return interaction.editReply({ content: '❌ No trade data found.' });
@@ -430,20 +308,23 @@ function init(db) {
     }
 
     async function showResolveActions(interaction, reportId) {
-        const report = await new Promise((resolve, reject) => {
-            db.get(`
-                SELECT tr.*, t.initiator_id, t.recipient_id, t.description, t.status as trade_status
-                FROM trade_reports tr
-                LEFT JOIN trades t ON tr.trade_id = t.id
-                WHERE tr.id = ?
-            `, [reportId], (err, row) => err ? reject(err) : resolve(row));
-        });
+        let report;
+        try {
+            const data = await hub.api('GET', `/tradebot/report/${reportId}`);
+            report = data.report;
+        } catch (err) {
+            if (err.status === 404) {
+                return interaction.reply({ content: '❌ Report not found!', flags: 64 });
+            }
+            throw err;
+        }
 
-        if (!report) return interaction.reply({ content: '❌ Report not found!', flags: 64 });
-        if (report.status === 'resolved') return interaction.reply({ content: '❌ Already resolved.', flags: 64 });
+        if (report.status === 'resolved') {
+            return interaction.reply({ content: '❌ Already resolved.', flags: 64 });
+        }
 
-        const tradeLabel = report.trade_id === 0 ? 'User Report' : `Trade #${report.trade_id}`;
-        const isUserReport = report.trade_id === 0;
+        const tradeLabel = !report.trade_id ? 'User Report' : `Trade #${report.trade_id}`;
+        const isUserReport = !report.trade_id;
 
         const embed = new EmbedBuilder()
             .setTitle(`🛡️ Resolve Report #${reportId}`)
@@ -482,80 +363,28 @@ function init(db) {
         const moderatorId = interaction.user.id;
         const guildId = interaction.guild.id;
 
-        const report = await new Promise((resolve, reject) => {
-            db.get(`
-                SELECT tr.*, t.initiator_id, t.recipient_id, t.description, t.status as trade_status
-                FROM trade_reports tr
-                LEFT JOIN trades t ON tr.trade_id = t.id
-                WHERE tr.id = ?
-            `, [reportId], (err, row) => err ? reject(err) : resolve(row));
-        });
-
-        if (!report) return interaction.update({ content: '❌ Report not found!', embeds: [], components: [] });
-        if (report.status === 'resolved') return interaction.update({ content: '❌ Already resolved.', embeds: [], components: [] });
-
-        let actionDescription = '';
-
-        if (action === 'dismiss') {
-            actionDescription = 'Report dismissed — no action taken';
-        } else if (action === 'cancel') {
-            if (report.trade_id) {
-                await new Promise((resolve, reject) => {
-                    db.run('UPDATE trades SET status = "cancelled" WHERE id = ?', [report.trade_id], (err) => err ? reject(err) : resolve());
-                });
-            }
-            actionDescription = 'Trade cancelled';
-        } else if (action === 'warn') {
-            await new Promise((resolve, reject) => {
-                db.run(
-                    'INSERT INTO user_warnings (user_id, moderator_id, reason, guild_id) VALUES (?, ?, ?, ?)',
-                    [report.reported_user_id, moderatorId, `Trade report: ${report.reason}`, guildId],
-                    (err) => err ? reject(err) : resolve()
-                );
+        let result;
+        try {
+            result = await hub.api('POST', `/tradebot/report/${reportId}/resolve`, {
+                action,
+                moderator_id: moderatorId,
+                guild_id: guildId
             });
-            if (report.trade_id) {
-                await new Promise((resolve, reject) => {
-                    db.run('UPDATE trades SET status = "cancelled" WHERE id = ?', [report.trade_id], (err) => err ? reject(err) : resolve());
-                });
+        } catch (err) {
+            if (err.status === 404) {
+                return interaction.update({ content: '❌ Report not found!', embeds: [], components: [] });
             }
-            actionDescription = 'User warned and trade cancelled';
-        } else if (action === 'mark_scammer') {
-            await new Promise((resolve, reject) => {
-                db.run(
-                    'INSERT OR REPLACE INTO scammer_list (user_id, moderator_id, reason, guild_id) VALUES (?, ?, ?, ?)',
-                    [report.reported_user_id, moderatorId, `Trade report: ${report.reason}`, guildId],
-                    (err) => err ? reject(err) : resolve()
-                );
-            });
-            await new Promise((resolve, reject) => {
-                db.run(
-                    'INSERT INTO user_warnings (user_id, moderator_id, reason, guild_id) VALUES (?, ?, ?, ?)',
-                    [report.reported_user_id, moderatorId, `Marked as scammer via trade report: ${report.reason}`, guildId],
-                    (err) => err ? reject(err) : resolve()
-                );
-            });
-            if (report.trade_id) {
-                await new Promise((resolve, reject) => {
-                    db.run('UPDATE trades SET status = "cancelled" WHERE id = ?', [report.trade_id], (err) => err ? reject(err) : resolve());
-                });
+            if (err.status === 409) {
+                return interaction.update({ content: '❌ Already resolved.', embeds: [], components: [] });
             }
-            actionDescription = 'User marked as scammer, warned, and trade cancelled';
+            throw err;
         }
-
-        const now = new Date().toISOString();
-        await new Promise((resolve, reject) => {
-            db.run(
-                'UPDATE trade_reports SET status = "resolved", resolved_at = ?, resolved_by = ? WHERE id = ?',
-                [now, moderatorId, reportId],
-                (err) => err ? reject(err) : resolve()
-            );
-        });
 
         const embed = new EmbedBuilder()
             .setTitle('✅ Report Resolved')
             .addFields(
                 { name: 'Report ID', value: `#${reportId}`, inline: true },
-                { name: 'Action Taken', value: actionDescription, inline: false },
+                { name: 'Action Taken', value: result.actionDescription, inline: false },
                 { name: 'Resolved By', value: `<@${moderatorId}>`, inline: true }
             )
             .setColor('#00ff00');

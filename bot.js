@@ -3,11 +3,11 @@ if (process.argv.includes('--debug')) process.env.DEBUG = '1';
 const { Client, GatewayIntentBits, SlashCommandBuilder } = require('discord.js');
 require('dotenv').config();
 
-const { setupDatabase } = require('./database');
 const { debug } = require('./utils');
 const initTrades = require('./handlers/trades');
 const initReports = require('./handlers/reports');
 const initMod = require('./handlers/mod');
+const { createHubConnection } = require('./hub');
 
 class TraderBot {
     constructor() {
@@ -18,10 +18,10 @@ class TraderBot {
             ]
         });
 
-        this.dbPath = process.env.DATABASE_PATH || 'trades.db';
         this.trades = null;
         this.reports = null;
         this.mod = null;
+        this.hub = createHubConnection();
 
         this.setupEvents();
     }
@@ -29,10 +29,13 @@ class TraderBot {
     setupEvents() {
         this.client.once('clientReady', async () => {
             try {
-                const db = await setupDatabase(this.dbPath);
-                this.trades = initTrades(db);
-                this.reports = initReports(db);
-                this.mod = initMod(db);
+                if (!this.hub) {
+                    console.error('❌ HUB_API_KEY not set — Hub connection required. Add HUB_API_KEY to .env');
+                    process.exit(1);
+                }
+                this.trades = initTrades(this.hub);
+                this.reports = initReports(this.hub);
+                this.mod = initMod(this.hub);
 
                 console.log(`✅ ${this.client.user.tag} is ready!`);
                 await this.registerSlashCommands();
