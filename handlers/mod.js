@@ -107,13 +107,17 @@ function init(hub) {
         }
 
         const trade = result.trade;
+        const userMap = await buildUserMap(interaction.client, [trade.initiator_id, trade.recipient_id]);
+        const formatId = id => isMcUuid(id)
+            ? `[${userMap.get(id) || id}](https://namemc.com/profile/${id})`
+            : `<@${id}>`;
         const embed = new EmbedBuilder()
             .setTitle('🗑️ Trade Deleted')
             .addFields(
                 { name: 'Trade ID', value: `#${tradeId}`, inline: true },
                 { name: 'Deleted By', value: `<@${moderatorId}>`, inline: true },
                 { name: 'Reason', value: reason, inline: false },
-                { name: 'Original Trade', value: `Between <@${trade.initiator_id}> and <@${trade.recipient_id}>\n${trade.description}`, inline: false }
+                { name: 'Original Trade', value: `Between ${formatId(trade.initiator_id)} and ${formatId(trade.recipient_id)}\n${trade.description}`, inline: false }
             )
             .setColor('#ff0000');
 

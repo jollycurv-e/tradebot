@@ -7,6 +7,7 @@ const { debug } = require('./utils');
 const initTrades = require('./handlers/trades');
 const initReports = require('./handlers/reports');
 const initMod = require('./handlers/mod');
+const initLink = require('./handlers/link');
 const { createHubConnection } = require('./hub');
 
 class TraderBot {
@@ -21,6 +22,7 @@ class TraderBot {
         this.trades = null;
         this.reports = null;
         this.mod = null;
+        this.link = null;
         this.hub = createHubConnection();
 
         this.setupEvents();
@@ -36,6 +38,7 @@ class TraderBot {
                 this.trades = initTrades(this.hub);
                 this.reports = initReports(this.hub);
                 this.mod = initMod(this.hub);
+                this.link = initLink(this.hub);
                 this.trades.listenForMcConfirms(this.client);
 
                 console.log(`✅ ${this.client.user.tag} is ready!`);
@@ -154,6 +157,14 @@ class TraderBot {
                         .setRequired(false)),
 
             new SlashCommandBuilder()
+                .setName('link')
+                .setDescription('Link your Minecraft account to Discord')
+                .addStringOption(option =>
+                    option.setName('code')
+                        .setDescription('One-time code from !link in Minecraft')
+                        .setRequired(true)),
+
+            new SlashCommandBuilder()
                 .setName('mod')
                 .setDescription('🔒 Moderation tools (Moderators only)')
                 .addStringOption(option =>
@@ -260,6 +271,10 @@ class TraderBot {
                 const user = interaction.options.getUser('user') || interaction.user;
                 await this.trades.showTradeStats(interaction, user);
             }
+
+        } else if (interaction.commandName === 'link') {
+            const code = interaction.options.getString('code');
+            await this.link.linkAccount(interaction, code);
 
         } else if (interaction.commandName === 'report') {
             const type = interaction.options.getString('type');
