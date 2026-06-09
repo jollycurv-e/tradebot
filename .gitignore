@@ -2,3 +2,4 @@
 trades.db
 node_modules/
 CLAUDE.md
+*.ps1

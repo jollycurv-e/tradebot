@@ -192,6 +192,14 @@ class TraderBot {
                         .setRequired(false))
         ];
 
+        if (process.env.DEBUG) {
+            commands.push(
+                new SlashCommandBuilder()
+                    .setName('testall')
+                    .setDescription('[DEBUG] Ping all Hub endpoints and report status')
+            );
+        }
+
         try {
             const guildId = process.env.GUILD_ID;
             if (guildId) {
@@ -307,7 +315,162 @@ class TraderBot {
                 default:
                     await interaction.reply({ content: '❌ Invalid moderation action!', flags: 64 });
             }
+        } else if (interaction.commandName === 'testall') {
+            if (!process.env.DEBUG) {
+                return interaction.reply({ content: '❌ Only available in debug mode.', flags: 64 });
+            }
+            await this.runTestAll(interaction);
         }
+    }
+
+    async runTestAll(interaction) {
+        await interaction.deferReply({ flags: 64 });
+        const uid = interaction.user.id;
+        const guildId = interaction.guild?.id || '0';
+        const channelId = interaction.channel?.id || '0';
+        const PHANTOM = '000000000000000001';
+
+        const results = [];
+        const cleanupTrades = [];
+        const cleanupReports = [];
+
+        function pass(label) { results.push(`✅ ${label}`); }
+        function fail(label, err) { results.push(`❌ ${label} — ${err.message || err}`); }
+
+        // 1. Create trade → confirm flow
+        let tradeId1;
+        try {
+            const { id } = await this.hub.api('POST', '/tradebot/trade', {
+                initiator_id: uid, recipient_id: PHANTOM,
+                description: '[testall] confirm flow', guild_id: guildId, channel_id: channelId
+            });
+            tradeId1 = id;
+            cleanupTrades.push(id);
+            pass(`Create trade → id ${id}`);
+        } catch (err) { fail('Create trade', err); }
+
+        // 2. Confirm trade
+        if (tradeId1) {
+            try {
+                await this.hub.api('POST', `/tradebot/trade/${tradeId1}/confirm`);
+                pass('Confirm trade');
+            } catch (err) { fail('Confirm trade', err); }
+        }
+
+        // 3. Trade appears in list
+        try {
+            const trades = await this.hub.api('GET', `/tradebot/user/${uid}/trades`);
+            Array.isArray(trades) && trades.some(t => t.id === tradeId1)
+                ? pass('Trades list contains confirmed trade')
+                : fail('Trades list', new Error('trade not found'));
+        } catch (err) { fail('Trades list', err); }
+
+        // 4. Stats reflect trade
+        try {
+            const { stats } = await this.hub.api('GET', `/tradebot/user/${uid}/trade-stats`);
+            stats
+                ? pass(`Trade stats (completed: ${stats.completed_trades})`)
+                : fail('Trade stats', new Error('no stats object'));
+        } catch (err) { fail('Trade stats', err); }
+
+        // 5. Report the trade
+        let reportId;
+        if (tradeId1) {
+            try {
+                const { id } = await this.hub.api('POST', '/tradebot/report', {
+                    trade_id: tradeId1, reporter_id: uid, reported_user_id: PHANTOM,
+                    reason: 'other', description: '[testall]', guild_id: guildId
+                });
+                reportId = id;
+                cleanupReports.push(id);
+                pass(`Report trade → id ${id}`);
+            } catch (err) { fail('Report trade', err); }
+        }
+
+        // 6. Verify report exists
+        if (reportId) {
+            try {
+                const { report } = await this.hub.api('GET', `/tradebot/report/${reportId}`);
+                report ? pass('Get report') : fail('Get report', new Error('null report'));
+            } catch (err) { fail('Get report', err); }
+        }
+
+        // 7. Resolve report
+        if (reportId) {
+            try {
+                await this.hub.api('POST', `/tradebot/report/${reportId}/resolve`, {
+                    action: 'dismiss', moderator_id: uid, guild_id: guildId
+                });
+                pass('Resolve report (dismiss)');
+            } catch (err) { fail('Resolve report', err); }
+        }
+
+        // 8. Create trade → reject flow
+        let tradeId2;
+        try {
+            const { id } = await this.hub.api('POST', '/tradebot/trade', {
+                initiator_id: uid, recipient_id: PHANTOM,
+                description: '[testall] reject flow', guild_id: guildId, channel_id: channelId
+            });
+            tradeId2 = id;
+            cleanupTrades.push(id);
+            pass(`Create trade (reject flow) → id ${id}`);
+        } catch (err) { fail('Create trade (reject flow)', err); }
+
+        // 9. Reject trade
+        if (tradeId2) {
+            try {
+                await this.hub.api('POST', `/tradebot/trade/${tradeId2}/reject`);
+                pass('Reject trade');
+            } catch (err) { fail('Reject trade', err); }
+        }
+
+        // 10. Scammer mark / check / unmark
+        try {
+            await this.hub.api('POST', '/tradebot/scammer', {
+                user_id: uid, moderator_id: uid, reason: '[testall]', guild_id: guildId
+            });
+            pass('Mark scammer');
+        } catch (err) { fail('Mark scammer', err); }
+
+        try {
+            const { scammer } = await this.hub.api('GET', `/tradebot/user/${uid}/scammer`);
+            scammer ? pass('Scammer status shows marked') : fail('Scammer status', new Error('mark not found'));
+        } catch (err) { fail('Scammer status', err); }
+
+        try {
+            await this.hub.api('DELETE', `/tradebot/scammer/${uid}`);
+            pass('Unmark scammer');
+        } catch (err) { fail('Unmark scammer', err); }
+
+        // 11. Verify scammer cleared
+        try {
+            const { scammer } = await this.hub.api('GET', `/tradebot/user/${uid}/scammer`);
+            !scammer ? pass('Scammer status cleared') : fail('Scammer status cleared', new Error('mark still present'));
+        } catch (err) { fail('Scammer status cleared', err); }
+
+        // Cleanup — reports before trades to avoid FK constraint
+        const cleaned = [];
+        for (const id of cleanupReports) {
+            try { await this.hub.api('DELETE', `/tradebot/report/${id}`); cleaned.push(`report ${id}`); }
+            catch (err) { cleaned.push(`report ${id} FAIL`); }
+        }
+        for (const id of cleanupTrades) {
+            try { await this.hub.api('DELETE', `/tradebot/trade/${id}`); cleaned.push(`trade ${id}`); }
+            catch (err) { cleaned.push(`trade ${id} FAIL`); }
+        }
+
+        const passed = results.filter(r => r.startsWith('✅')).length;
+        const total = results.length;
+        const content = [
+            `**testall — ${passed}/${total} passed**`,
+            '```',
+            results.join('\n'),
+            '```',
+            `cleaned: ${cleaned.join(', ') || 'none'}`
+        ].join('\n');
+
+        await interaction.editReply({ content });
     }
 
     async start() {
