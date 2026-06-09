@@ -248,6 +248,8 @@ class TraderBot {
 
     async handleSlashCommand(interaction) {
         console.log(`[Command] ${interaction.user.tag} (${interaction.user.id}) used: /${interaction.commandName}`);
+        const u = interaction.user;
+        this.hub.api('POST', '/tradebot/discord-username', [{ user_id: u.id, username: u.globalName || u.username }]).catch(() => {});
 
         if (interaction.commandName === 'trade') {
             const withUser = interaction.options.getUser('with');

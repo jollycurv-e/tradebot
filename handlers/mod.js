@@ -231,6 +231,7 @@ function init(hub) {
 
     async function buildUserMap(client, userIds) {
         const map = new Map();
+        const newDiscord = [];
         await Promise.all([...new Set(userIds)].map(async id => {
             if (usernameCache.has(id)) {
                 map.set(id, usernameCache.get(id));
@@ -243,10 +244,14 @@ function init(hub) {
             } else {
                 const user = await client.users.fetch(id).catch(() => null);
                 name = user ? (user.globalName || user.username) : id;
+                if (name !== id) newDiscord.push({ user_id: id, username: name });
             }
             usernameCache.set(id, name);
             map.set(id, name);
         }));
+        if (newDiscord.length > 0) {
+            hub.api('POST', '/tradebot/discord-username', newDiscord).catch(() => {});
+        }
         return map;
     }
 

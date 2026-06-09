@@ -54,6 +54,10 @@ function init(hub) {
             channel_id: channel.id
         });
         console.log(`[Database] Trade #${tradeId} created by ${author.tag} for ${withUser.tag}`);
+        hub.api('POST', '/tradebot/discord-username', [
+            { user_id: author.id, username: author.globalName || author.username },
+            { user_id: withUser.id, username: withUser.globalName || withUser.username }
+        ]).catch(() => {});
 
         const embed = new EmbedBuilder()
             .setTitle('📋 New Trade Proposal')
@@ -243,9 +247,24 @@ function init(hub) {
         }
 
         if (partners.length > 0) {
+            const partnerLines = await Promise.all(partners.map(async p => {
+                const id = p.partner_id;
+                let label;
+                if (/^\d+$/.test(id)) {
+                    label = `<@${id}>`;
+                } else {
+                    try {
+                        const data = await hub.api('GET', `/tradebot/mc-username/${id}`);
+                        label = `[${data?.username || id}](https://namemc.com/profile/${id})`;
+                    } catch {
+                        label = `[${id}](https://namemc.com/profile/${id})`;
+                    }
+                }
+                return `${label}: ${p.trade_count} trades`;
+            }));
             embed.addFields({
                 name: '👥 Top Trading Partners',
-                value: partners.map(p => `${formatUserId(p.partner_id)}: ${p.trade_count} trades`).join('\n'),
+                value: partnerLines.join('\n'),
                 inline: false
             });
         }
