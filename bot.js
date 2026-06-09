@@ -40,6 +40,7 @@ class TraderBot {
                 this.mod = initMod(this.hub);
                 this.link = initLink(this.hub);
                 this.trades.listenForMcConfirms(this.client);
+                this.reports.listenForMcReports(this.client);
 
                 console.log(`✅ ${this.client.user.tag} is ready!`);
                 await this.registerSlashCommands();
@@ -207,6 +208,10 @@ class TraderBot {
                         .setDescription('Additional details for scammer marking or deletion reason')
                         .setRequired(false))
                 .addStringOption(option =>
+                    option.setName('mc_user')
+                        .setDescription('Minecraft UUID (for MC-origin users without a Discord account)')
+                        .setRequired(false))
+                .addStringOption(option =>
                     option.setName('since')
                         .setDescription('Export new trades since this date (YYYY-MM-DD). Defaults to last export date.')
                         .setRequired(false))
@@ -307,6 +312,7 @@ class TraderBot {
             const reason = interaction.options.getString('reason');
             const details = interaction.options.getString('details');
             const since = interaction.options.getString('since');
+            const mcUser = interaction.options.getString('mc_user');
 
             switch (action) {
                 case 'reports':
@@ -337,10 +343,13 @@ class TraderBot {
                     await this.mod.markScammer(interaction, user, details);
                     break;
                 case 'unscammer':
-                    if (!user) {
-                        return interaction.reply({ content: '❌ User is required!', flags: 64 });
+                    if (mcUser) {
+                        await this.mod.unmarkScammer(interaction, null, mcUser);
+                    } else if (user) {
+                        await this.mod.unmarkScammer(interaction, user);
+                    } else {
+                        return interaction.reply({ content: '❌ Provide a Discord user or mc_user (Minecraft UUID)!', flags: 64 });
                     }
-                    await this.mod.unmarkScammer(interaction, user);
                     break;
                 case 'export_summary':
                     await this.mod.exportTradeSummary(interaction, since);

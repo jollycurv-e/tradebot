@@ -36,6 +36,23 @@ function init(hub) {
             .setDescription(`Showing ${reports.length} ${status === 'all' ? '' : status} reports`)
             .setColor('#ff9900');
 
+        const allIds = reports.flatMap(r => [r.reporter_id, r.reported_user_id]);
+        const mcIds = [...new Set(allIds.filter(isMcUuid))];
+        await Promise.all(mcIds.map(async id => {
+            if (!usernameCache.has(id)) {
+                const data = await hub.api('GET', `/tradebot/mc-username/${id}`).catch(() => null);
+                if (data?.username) usernameCache.set(id, data.username);
+            }
+        }));
+
+        function formatReportUser(id) {
+            if (isMcUuid(id)) {
+                const name = usernameCache.get(id) || id;
+                return `[${name}](https://namemc.com/profile/${id})`;
+            }
+            return `<@${id}>`;
+        }
+
         for (const report of reports) {
             const statusEmoji = report.status === 'pending' ? '⏳' : '✅';
             const createdTimestamp = toUnix(report.created_at);
@@ -43,7 +60,7 @@ function init(hub) {
 
             embed.addFields({
                 name: `${statusEmoji} Report #${report.id} - ${tradeLabel}`,
-                value: `**Reporter:** <@${report.reporter_id}>\n**Reported:** <@${report.reported_user_id}>\n**Reason:** ${report.reason}\n**Created:** <t:${createdTimestamp}:R>`,
+                value: `**Reporter:** ${formatReportUser(report.reporter_id)}\n**Reported:** ${formatReportUser(report.reported_user_id)}\n**Reason:** ${report.reason}\n**Created:** <t:${createdTimestamp}:R>`,
                 inline: false
             });
         }
@@ -179,12 +196,13 @@ function init(hub) {
         }
     }
 
-    async function unmarkScammer(interaction, user) {
+    async function unmarkScammer(interaction, user, mcUuid = null) {
         const moderatorId = interaction.user.id;
+        const targetId = mcUuid || user.id;
 
         let result;
         try {
-            result = await hub.api('DELETE', `/tradebot/scammer/${user.id}`);
+            result = await hub.api('DELETE', `/tradebot/scammer/${targetId}`);
         } catch (err) {
             if (err.status === 404) {
                 return interaction.reply({ content: '❌ This user is not marked as a scammer.', flags: 64 });
@@ -193,10 +211,19 @@ function init(hub) {
         }
 
         const scammer = result.scammer;
+        let userDisplay;
+        if (isMcUuid(targetId)) {
+            const data = await hub.api('GET', `/tradebot/mc-username/${targetId}`).catch(() => null);
+            const name = data?.username || targetId;
+            userDisplay = `[${name}](https://namemc.com/profile/${targetId})`;
+        } else {
+            userDisplay = `<@${targetId}>`;
+        }
+
         const embed = new EmbedBuilder()
             .setTitle('✅ Scammer Mark Removed')
             .addFields(
-                { name: 'User', value: `<@${user.id}>`, inline: true },
+                { name: 'User', value: userDisplay, inline: true },
                 { name: 'Removed By', value: `<@${moderatorId}>`, inline: true },
                 { name: 'Previously Marked For', value: scammer.reason, inline: false }
             )

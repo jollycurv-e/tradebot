@@ -1,6 +1,10 @@
 const { EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { debug } = require('../utils.js');
 
+function isMcUuid(id) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
 function init(hub) {
     async function reportTrade(interaction, tradeId, reason, description) {
         const reporterId = interaction.user.id;
@@ -236,7 +240,59 @@ function init(hub) {
         return posted;
     }
 
-    return { reportTrade, reportUser, handleReportButton, handleModalSubmit };
+    async function resolveMcDisplay(uuid) {
+        try {
+            const data = await hub.api('GET', `/tradebot/mc-username/${uuid}`);
+            const name = data?.username || uuid;
+            return `[${name}](https://namemc.com/profile/${uuid})`;
+        } catch {
+            return `[${uuid}](https://namemc.com/profile/${uuid})`;
+        }
+    }
+
+    function listenForMcReports(discordClient) {
+        const MOD_CHANNELS = ['mod-logs', 'mod-log', 'modlogs', 'modlog', 'staff-logs', 'reports'];
+
+        hub.onMessage(async (payload) => {
+            if (payload.action !== 'report_created') return;
+            const report = payload.data?.report;
+            if (!report) return;
+            // Discord-origin reports already post to modlogs via the slash command handler
+            if (/^\d+$/.test(report.guild_id)) return;
+
+            const [reporterDisplay, reportedDisplay] = await Promise.all([
+                isMcUuid(report.reporter_id) ? resolveMcDisplay(report.reporter_id) : Promise.resolve(`<@${report.reporter_id}>`),
+                isMcUuid(report.reported_user_id) ? resolveMcDisplay(report.reported_user_id) : Promise.resolve(`<@${report.reported_user_id}>`),
+            ]);
+
+            const embed = new EmbedBuilder()
+                .setTitle('🚨 New Report (Minecraft)')
+                .setDescription(`Report #${report.id}`)
+                .addFields(
+                    { name: 'Reporter', value: reporterDisplay, inline: true },
+                    { name: 'Reported User', value: reportedDisplay, inline: true },
+                    { name: 'Reason', value: report.description || report.reason, inline: false },
+                    { name: 'Source', value: `In-game on \`${report.guild_id}\``, inline: true }
+                )
+                .setColor('#ff0000');
+
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`mod_action_${report.id}_dismiss`).setLabel('Dismiss').setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder().setCustomId(`mod_action_${report.id}_cancel`).setLabel('Cancel Trade').setStyle(ButtonStyle.Primary).setDisabled(true),
+                new ButtonBuilder().setCustomId(`mod_action_${report.id}_warn`).setLabel('Warn User').setStyle(ButtonStyle.Danger),
+                new ButtonBuilder().setCustomId(`mod_action_${report.id}_mark_scammer`).setLabel('Mark Scammer').setStyle(ButtonStyle.Danger)
+            );
+
+            for (const guild of discordClient.guilds.cache.values()) {
+                const channel = guild.channels.cache.find(ch => MOD_CHANNELS.includes(ch.name) && ch.type === 0);
+                if (channel) {
+                    try { await channel.send({ embeds: [embed], components: [row] }); } catch {}
+                }
+            }
+        });
+    }
+
+    return { reportTrade, reportUser, handleReportButton, handleModalSubmit, listenForMcReports };
 }
 
 module.exports = init;
