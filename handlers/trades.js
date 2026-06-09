@@ -7,6 +7,11 @@ function toUnix(field) {
     return Math.floor(new Date(ts).getTime() / 1000);
 }
 
+function formatUserId(id) {
+    if (/^\d+$/.test(id)) return `<@${id}>`;
+    return `[${id}](https://namemc.com/profile/${id})`;
+}
+
 function init(hub) {
     async function createTrade(context, withUser, description) {
         const author = context.user || context.author;
@@ -200,7 +205,7 @@ function init(hub) {
 
             embed.addFields({
                 name: `${statusEmoji} Trade #${trade.id} - ${trade.status.charAt(0).toUpperCase() + trade.status.slice(1)}`,
-                value: `**${role}** with <@${otherUserId}>\n**Description:** ${trade.description}\n**Created:** <t:${createdTimestamp}:R>${confirmedInfo}`,
+                value: `**${role}** with ${formatUserId(otherUserId)}\n**Description:** ${trade.description}\n**Created:** <t:${createdTimestamp}:R>${confirmedInfo}`,
                 inline: false
             });
         }
@@ -240,7 +245,7 @@ function init(hub) {
         if (partners.length > 0) {
             embed.addFields({
                 name: '👥 Top Trading Partners',
-                value: partners.map(p => `<@${p.partner_id}>: ${p.trade_count} trades`).join('\n'),
+                value: partners.map(p => `${formatUserId(p.partner_id)}: ${p.trade_count} trades`).join('\n'),
                 inline: false
             });
         }
@@ -270,7 +275,65 @@ function init(hub) {
         await reply(context, { embeds: [embed] });
     }
 
-    return { createTrade, handleButtonInteraction, showTrades, showTradeStats };
+    async function showTradesByMcUser(context, mcUsername) {
+        let uuid;
+        try {
+            const data = await hub.api('GET', `/convert-username-to-uuid?username=${encodeURIComponent(mcUsername)}`);
+            uuid = data?.uuid;
+        } catch {
+            return reply(context, `❌ Minecraft user \`${mcUsername}\` not found.`);
+        }
+        if (!uuid) return reply(context, `❌ Minecraft user \`${mcUsername}\` not found.`);
+        await showTrades(context, { id: uuid, displayName: mcUsername, username: mcUsername });
+    }
+
+    async function showStatsByMcUser(context, mcUsername) {
+        let uuid;
+        try {
+            const data = await hub.api('GET', `/convert-username-to-uuid?username=${encodeURIComponent(mcUsername)}`);
+            uuid = data?.uuid;
+        } catch {
+            return reply(context, `❌ Minecraft user \`${mcUsername}\` not found.`);
+        }
+        if (!uuid) return reply(context, `❌ Minecraft user \`${mcUsername}\` not found.`);
+        await showTradeStats(context, { id: uuid, displayName: mcUsername, username: mcUsername });
+    }
+
+    function listenForMcConfirms(discordClient) {
+        const MC_CHANNEL_ID = 'minecraft';
+        hub.onMessage(async (payload) => {
+            if (payload.action !== 'trade_confirmed') return;
+            const trade = payload.data?.trade;
+            if (!trade || trade.channel_id !== MC_CHANNEL_ID) return;
+
+            let initiatorName = trade.initiator_id;
+            let recipientName = trade.recipient_id;
+            try { initiatorName = (await hub.api('GET', `/tradebot/mc-username/${trade.initiator_id}`)).username ?? initiatorName; } catch {}
+            try { recipientName = (await hub.api('GET', `/tradebot/mc-username/${trade.recipient_id}`)).username ?? recipientName; } catch {}
+
+            const initiatorLink = `[${initiatorName}](https://namemc.com/profile/${trade.initiator_id})`;
+            const recipientLink = `[${recipientName}](https://namemc.com/profile/${trade.recipient_id})`;
+
+            const embed = new EmbedBuilder()
+                .setTitle('✅ Trade Confirmed! (Minecraft)')
+                .setDescription(`A trade on \`${trade.guild_id}\` has been confirmed.`)
+                .addFields({
+                    name: 'Trade Details',
+                    value: `**Between:** ${initiatorLink} ↔️ ${recipientLink}\n**Description:** ${trade.description}\n**Confirmed:** <t:${Math.floor(Date.now() / 1000)}:R>`,
+                    inline: false
+                })
+                .setColor('#00ff00');
+
+            for (const guild of discordClient.guilds.cache.values()) {
+                const channel = guild.channels.cache.find(ch => ch.name.includes('verified-trade') && ch.type === 0);
+                if (channel) {
+                    try { await channel.send({ embeds: [embed] }); } catch {}
+                }
+            }
+        });
+    }
+
+    return { createTrade, handleButtonInteraction, showTrades, showTradeStats, showTradesByMcUser, showStatsByMcUser, listenForMcConfirms };
 }
 
 module.exports = init;

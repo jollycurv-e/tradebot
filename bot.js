@@ -36,6 +36,7 @@ class TraderBot {
                 this.trades = initTrades(this.hub);
                 this.reports = initReports(this.hub);
                 this.mod = initMod(this.hub);
+                this.trades.listenForMcConfirms(this.client);
 
                 console.log(`✅ ${this.client.user.tag} is ready!`);
                 await this.registerSlashCommands();
@@ -99,6 +100,10 @@ class TraderBot {
                 .addUserOption(option =>
                     option.setName('user')
                         .setDescription('User to view trades for (default: yourself)')
+                        .setRequired(false))
+                .addStringOption(option =>
+                    option.setName('mc_user')
+                        .setDescription('Minecraft username to look up trades for')
                         .setRequired(false)),
 
             new SlashCommandBuilder()
@@ -107,6 +112,10 @@ class TraderBot {
                 .addUserOption(option =>
                     option.setName('user')
                         .setDescription('User to view stats for (default: yourself)')
+                        .setRequired(false))
+                .addStringOption(option =>
+                    option.setName('mc_user')
+                        .setDescription('Minecraft username to look up stats for')
                         .setRequired(false)),
 
             new SlashCommandBuilder()
@@ -235,12 +244,22 @@ class TraderBot {
             await this.trades.createTrade(interaction, withUser, description);
 
         } else if (interaction.commandName === 'trades') {
-            const user = interaction.options.getUser('user') || interaction.user;
-            await this.trades.showTrades(interaction, user);
+            const mcUser = interaction.options.getString('mc_user');
+            if (mcUser) {
+                await this.trades.showTradesByMcUser(interaction, mcUser);
+            } else {
+                const user = interaction.options.getUser('user') || interaction.user;
+                await this.trades.showTrades(interaction, user);
+            }
 
         } else if (interaction.commandName === 'tradestats') {
-            const user = interaction.options.getUser('user') || interaction.user;
-            await this.trades.showTradeStats(interaction, user);
+            const mcUser = interaction.options.getString('mc_user');
+            if (mcUser) {
+                await this.trades.showStatsByMcUser(interaction, mcUser);
+            } else {
+                const user = interaction.options.getUser('user') || interaction.user;
+                await this.trades.showTradeStats(interaction, user);
+            }
 
         } else if (interaction.commandName === 'report') {
             const type = interaction.options.getString('type');
