@@ -333,7 +333,7 @@ function init(hub) {
                     .setDescription(`A trade on \`${trade.guild_id}\` has been confirmed.`)
                     .addFields({
                         name: 'Trade Details',
-                        value: `**Between:** ${initiatorLink} ↔️ ${recipientLink}\n**Description:** ${trade.description}\n**Confirmed:** <t:${Math.floor(Date.now() / 1000)}:R>`,
+                        value: `**Trade ID:** ${trade.id}\n**Between:** ${initiatorLink} ↔️ ${recipientLink}\n**Description:** ${trade.description}\n**Confirmed:** <t:${Math.floor(Date.now() / 1000)}:R>`,
                         inline: false
                     })
                     .setColor('#00ff00');
@@ -345,7 +345,7 @@ function init(hub) {
                     .setDescription(`A trade on \`${trade.guild_id}\` has been rejected.`)
                     .addFields({
                         name: 'Trade Details',
-                        value: `**Between:** ${initiatorLink} ↔️ ${recipientLink}\n**Description:** ${trade.description}\n**Rejected:** <t:${Math.floor(Date.now() / 1000)}:R>`,
+                        value: `**Trade ID:** ${trade.id}\n**Between:** ${initiatorLink} ↔️ ${recipientLink}\n**Description:** ${trade.description}\n**Rejected:** <t:${Math.floor(Date.now() / 1000)}:R>`,
                         inline: false
                     })
                     .setColor('#ff0000');
