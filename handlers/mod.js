@@ -3,7 +3,8 @@ const { debug } = require('../utils.js');
 
 function toUnix(field) {
     if (!field) return null;
-    const ts = field.endsWith('Z') ? field : field.replace(' ', 'T') + 'Z';
+    if (typeof field === 'number') return Math.floor(field / 1000);
+    const ts = String(field).endsWith('Z') ? field : field.replace(' ', 'T') + 'Z';
     return Math.floor(new Date(ts).getTime() / 1000);
 }
 
@@ -268,10 +269,10 @@ function init(hub) {
             sinceLabel = `since ${sinceInput.slice(0, 10)}`;
         }
 
-        const { rows, sinceTs } = await hub.api('GET', `/tradebot/export/summary${sinceParam}`);
+        const { rows, sinceMs } = await hub.api('GET', `/tradebot/export/summary${sinceParam}`);
 
         if (!sinceLabel) {
-            sinceLabel = sinceTs ? `since ${sinceTs.slice(0, 10)}` : 'all time (no previous export)';
+            sinceLabel = sinceMs ? `since ${new Date(sinceMs).toISOString().slice(0, 10)}` : 'all time (no previous export)';
         }
 
         if (!rows.length) {
@@ -283,7 +284,7 @@ function init(hub) {
         const csv = 'username,user_id,total_trades,confirmed,rejected,cancelled,pending,new_confirmed\n'
             + rows.map(r => [csvCell(userMap.get(r.user_id)), r.user_id, r.total_trades, r.confirmed, r.rejected, r.cancelled, r.pending, r.new_confirmed].join(',')).join('\n');
 
-        await setConfig('last_export_at', new Date().toISOString());
+        await setConfig('last_export_at', String(Date.now()));
 
         const attachment = new AttachmentBuilder(Buffer.from(csv, 'utf-8'), { name: 'trade_summary.csv' });
         await interaction.editReply({ content: `📊 Trade summary — ${rows.length} users (new trades ${sinceLabel})`, files: [attachment] });
@@ -302,10 +303,10 @@ function init(hub) {
             sinceLabel = `since ${sinceInput.slice(0, 10)}`;
         }
 
-        const { rows, sinceTs } = await hub.api('GET', `/tradebot/export/full${sinceParam}`);
+        const { rows, sinceMs } = await hub.api('GET', `/tradebot/export/full${sinceParam}`);
 
         if (!sinceLabel) {
-            sinceLabel = sinceTs ? `since ${sinceTs.slice(0, 10)}` : 'all time (no previous export)';
+            sinceLabel = sinceMs ? `since ${new Date(sinceMs).toISOString().slice(0, 10)}` : 'all time (no previous export)';
         }
 
         if (!rows.length) {
@@ -320,7 +321,7 @@ function init(hub) {
                 return [csvCell(userMap.get(r.user_id)), r.user_id, r.total_trades, r.confirmed, r.rejected, r.cancelled, r.pending, r.initiated, r.received, r.new_confirmed, successRate, r.warning_count, r.is_scammer].join(',');
             }).join('\n');
 
-        await setConfig('last_export_at', new Date().toISOString());
+        await setConfig('last_export_at', String(Date.now()));
 
         const attachment = new AttachmentBuilder(Buffer.from(csv, 'utf-8'), { name: 'trade_stats_full.csv' });
         await interaction.editReply({ content: `📊 Full trade stats — ${rows.length} users (new trades ${sinceLabel})`, files: [attachment] });

@@ -3,7 +3,8 @@ const { reply } = require('../utils');
 
 function toUnix(field) {
     if (!field) return null;
-    const ts = field.endsWith('Z') ? field : field.replace(' ', 'T') + 'Z';
+    if (typeof field === 'number') return Math.floor(field / 1000);
+    const ts = String(field).endsWith('Z') ? field : field.replace(' ', 'T') + 'Z';
     return Math.floor(new Date(ts).getTime() / 1000);
 }
 
