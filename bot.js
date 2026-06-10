@@ -81,7 +81,11 @@ class TraderBot {
                     await this.handleSlashCommand(interaction);
                 } else if (interaction.isModalSubmit()) {
                     debug(`Modal submit from ${interaction.user.tag}: customId=${interaction.customId}`);
-                    await this.reports.handleModalSubmit(interaction);
+                    if (interaction.customId === 'unlink_confirm_modal') {
+                        await this.link.confirmUnlink(interaction);
+                    } else {
+                        await this.reports.handleModalSubmit(interaction);
+                    }
                 } else {
                     debug(`Unhandled interaction type: ${interaction.type} from ${interaction.user.tag}`);
                 }
@@ -171,6 +175,10 @@ class TraderBot {
                     option.setName('code')
                         .setDescription('One-time code from !link in Minecraft')
                         .setRequired(true)),
+
+            new SlashCommandBuilder()
+                .setName('unlink')
+                .setDescription('Unlink your Minecraft account from Discord'),
 
             new SlashCommandBuilder()
                 .setName('mod')
@@ -289,6 +297,9 @@ class TraderBot {
         } else if (interaction.commandName === 'link') {
             const code = interaction.options.getString('code');
             await this.link.linkAccount(interaction, code);
+
+        } else if (interaction.commandName === 'unlink') {
+            await this.link.unlinkAccount(interaction);
 
         } else if (interaction.commandName === 'report') {
             const type = interaction.options.getString('type');
