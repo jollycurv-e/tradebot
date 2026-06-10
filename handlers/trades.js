@@ -307,7 +307,7 @@ function init(hub) {
                 inline: false
             });
             if (warnings.length > 3) {
-                embed.setFooter({ text: `Showing 3 of ${warnings.length} warnings. Use /warnings for full list.` });
+                embed.setFooter({ text: `Showing 3 of ${warnings.length} warnings` });
             }
         } else if (!scammerStatus) {
             embed.addFields({ name: '✅ User Status', value: 'No warnings or flags on record', inline: false });
