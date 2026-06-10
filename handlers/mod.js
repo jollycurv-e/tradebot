@@ -439,7 +439,28 @@ function init(hub) {
         await interaction.update({ embeds: [embed], components: [] });
     }
 
-    return { checkModeratorPermission, showModeratedTrades, resolveTradeReport, deleteTrade, showUserWarnings, markScammer, unmarkScammer, exportTradeSummary, exportFullStats, showResolveActions, handleResolveAction };
+    async function exportScammers(interaction) {
+        await interaction.deferReply({ flags: 64 });
+        const data = await hub.api('GET', '/tradebot/scammers');
+        const scammers = data?.scammers ?? [];
+
+        if (!scammers.length) {
+            return interaction.editReply('✅ No scammers on record.');
+        }
+
+        const csv = 'player_name,user_id,reason,marked_at\n'
+            + scammers.map(s => [
+                csvCell(s.player_name),
+                csvCell(s.user_id),
+                csvCell(s.reason),
+                csvCell(new Date(Number(s.created_at)).toISOString())
+            ].join(',')).join('\n');
+
+        const attachment = new AttachmentBuilder(Buffer.from(csv, 'utf-8'), { name: 'scammers.csv' });
+        await interaction.editReply({ content: `🚨 ${scammers.length} scammer(s) on record`, files: [attachment] });
+    }
+
+    return { checkModeratorPermission, showModeratedTrades, resolveTradeReport, deleteTrade, showUserWarnings, markScammer, unmarkScammer, exportTradeSummary, exportFullStats, showResolveActions, handleResolveAction, exportScammers };
 }
 
 module.exports = init;

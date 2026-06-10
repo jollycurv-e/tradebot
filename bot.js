@@ -181,6 +181,10 @@ class TraderBot {
                 .setDescription('Unlink your Minecraft account from Discord'),
 
             new SlashCommandBuilder()
+                .setName('scammers')
+                .setDescription('Download the scammer list as a CSV'),
+
+            new SlashCommandBuilder()
                 .setName('mod')
                 .setDescription('🔒 Moderation tools (Moderators only)')
                 .addStringOption(option =>
@@ -300,6 +304,9 @@ class TraderBot {
 
         } else if (interaction.commandName === 'unlink') {
             await this.link.unlinkAccount(interaction);
+
+        } else if (interaction.commandName === 'scammers') {
+            await this.mod.exportScammers(interaction);
 
         } else if (interaction.commandName === 'report') {
             const type = interaction.options.getString('type');
