@@ -21,6 +21,7 @@ function init(hub) {
     }
 
     async function showModeratedTrades(interaction, status) {
+        await interaction.deferReply();
         const reports = await hub.api('GET', `/tradebot/reports?status=${status}`);
 
         if (!reports.length) {
@@ -28,7 +29,7 @@ function init(hub) {
                 .setTitle('🛡️ Trade Reports')
                 .setDescription(`No ${status === 'all' ? '' : status} reports found.`)
                 .setColor('#0099ff');
-            return interaction.reply({ embeds: [embed] });
+            return interaction.editReply({ embeds: [embed] });
         }
 
         const embed = new EmbedBuilder()
@@ -74,10 +75,11 @@ function init(hub) {
             )
         );
 
-        await interaction.reply({ embeds: [embed], components: [row] });
+        await interaction.editReply({ embeds: [embed], components: [row] });
     }
 
     async function resolveTradeReport(interaction, reportId, action) {
+        await interaction.deferReply();
         const moderatorId = interaction.user.id;
         const guildId = interaction.guild.id;
 
@@ -90,10 +92,10 @@ function init(hub) {
             });
         } catch (err) {
             if (err.status === 404) {
-                return interaction.reply({ content: '❌ Report not found!', flags: 64 });
+                return interaction.editReply({ content: '❌ Report not found!' });
             }
             if (err.status === 409) {
-                return interaction.reply({ content: '❌ This report has already been resolved!', flags: 64 });
+                return interaction.editReply({ content: '❌ This report has already been resolved!' });
             }
             throw err;
         }
@@ -108,10 +110,11 @@ function init(hub) {
             )
             .setColor('#00ff00');
 
-        await interaction.reply({ embeds: [embed] });
+        await interaction.editReply({ embeds: [embed] });
     }
 
     async function deleteTrade(interaction, tradeId, reason) {
+        await interaction.deferReply();
         const moderatorId = interaction.user.id;
 
         let result;
@@ -119,7 +122,7 @@ function init(hub) {
             result = await hub.api('DELETE', `/tradebot/trade/${tradeId}`);
         } catch (err) {
             if (err.status === 404) {
-                return interaction.reply({ content: '❌ Trade not found!', flags: 64 });
+                return interaction.editReply({ content: '❌ Trade not found!' });
             }
             throw err;
         }
@@ -139,10 +142,11 @@ function init(hub) {
             )
             .setColor('#ff0000');
 
-        await interaction.reply({ embeds: [embed] });
+        await interaction.editReply({ embeds: [embed] });
     }
 
     async function showUserWarnings(interaction, user) {
+        await interaction.deferReply();
         const warnings = await hub.api('GET', `/tradebot/user/${user.id}/warnings`);
 
         const embed = new EmbedBuilder()
@@ -165,10 +169,11 @@ function init(hub) {
             }
         }
 
-        await interaction.reply({ embeds: [embed] });
+        await interaction.editReply({ embeds: [embed] });
     }
 
     async function markScammer(interaction, user, reason) {
+        await interaction.deferReply();
         const moderatorId = interaction.user.id;
         const guildId = interaction.guild.id;
 
@@ -190,13 +195,14 @@ function init(hub) {
                 .setColor('#ff0000')
                 .setFooter({ text: '⚠️ This user is now flagged in all trade interactions' });
 
-            await interaction.reply({ embeds: [embed] });
+            await interaction.editReply({ embeds: [embed] });
         } catch (error) {
-            await interaction.reply({ content: '❌ Error marking user as scammer.', flags: 64 });
+            await interaction.editReply({ content: '❌ Error marking user as scammer.' });
         }
     }
 
     async function unmarkScammer(interaction, user, mcUuid = null) {
+        await interaction.deferReply();
         const moderatorId = interaction.user.id;
         const targetId = mcUuid || user.id;
 
@@ -205,7 +211,7 @@ function init(hub) {
             result = await hub.api('DELETE', `/tradebot/scammer/${targetId}`);
         } catch (err) {
             if (err.status === 404) {
-                return interaction.reply({ content: '❌ This user is not marked as a scammer.', flags: 64 });
+                return interaction.editReply({ content: '❌ This user is not marked as a scammer.' });
             }
             throw err;
         }
@@ -229,7 +235,7 @@ function init(hub) {
             )
             .setColor('#00ff00');
 
-        await interaction.reply({ embeds: [embed] });
+        await interaction.editReply({ embeds: [embed] });
     }
 
     async function getConfig(key) {
@@ -355,19 +361,20 @@ function init(hub) {
     }
 
     async function showResolveActions(interaction, reportId) {
+        await interaction.deferReply({ flags: 64 });
         let report;
         try {
             const data = await hub.api('GET', `/tradebot/report/${reportId}`);
             report = data.report;
         } catch (err) {
             if (err.status === 404) {
-                return interaction.reply({ content: '❌ Report not found!', flags: 64 });
+                return interaction.editReply({ content: '❌ Report not found!' });
             }
             throw err;
         }
 
         if (report.status === 'resolved') {
-            return interaction.reply({ content: '❌ Already resolved.', flags: 64 });
+            return interaction.editReply({ content: '❌ Already resolved.' });
         }
 
         const tradeLabel = !report.trade_id ? 'User Report' : `Trade #${report.trade_id}`;
@@ -403,10 +410,11 @@ function init(hub) {
                 .setStyle(ButtonStyle.Danger)
         );
 
-        await interaction.reply({ embeds: [embed], components: [row], flags: 64 });
+        await interaction.editReply({ embeds: [embed], components: [row] });
     }
 
     async function handleResolveAction(interaction, reportId, action) {
+        await interaction.deferUpdate();
         const moderatorId = interaction.user.id;
         const guildId = interaction.guild.id;
 
@@ -419,10 +427,10 @@ function init(hub) {
             });
         } catch (err) {
             if (err.status === 404) {
-                return interaction.update({ content: '❌ Report not found!', embeds: [], components: [] });
+                return interaction.editReply({ content: '❌ Report not found!', embeds: [], components: [] });
             }
             if (err.status === 409) {
-                return interaction.update({ content: '❌ Already resolved.', embeds: [], components: [] });
+                return interaction.editReply({ content: '❌ Already resolved.', embeds: [], components: [] });
             }
             throw err;
         }
@@ -436,7 +444,7 @@ function init(hub) {
             )
             .setColor('#00ff00');
 
-        await interaction.update({ embeds: [embed], components: [] });
+        await interaction.editReply({ embeds: [embed], components: [] });
     }
 
     async function exportScammers(interaction) {
