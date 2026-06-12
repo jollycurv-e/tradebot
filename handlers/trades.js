@@ -13,6 +13,23 @@ function formatUserId(id) {
     return `[${id}](https://namemc.com/profile/${id})`;
 }
 
+async function enrichDiscordParty(hub, discordId) {
+    try {
+        const { link } = await hub.api('GET', `/tradebot/link/${discordId}`);
+        if (!link) return null;
+        const mcName = await hub.api('GET', `/tradebot/mc-username/${link.mc_uuid}`)
+            .then(r => r.username ?? null).catch(() => null);
+        return mcName ? { mcName, mcUuid: link.mc_uuid } : null;
+    } catch { return null; }
+}
+
+async function enrichMcParty(hub, mcUuid) {
+    try {
+        const { link } = await hub.api('GET', `/tradebot/link/${mcUuid}`);
+        return link?.discord_id ?? null;
+    } catch { return null; }
+}
+
 function init(hub) {
     async function createTrade(context, withUser, description) {
         const author = context.user || context.author;
@@ -105,12 +122,22 @@ function init(hub) {
         }
 
         const t = result.trade;
+        const [initiatorMc, recipientMc] = await Promise.all([
+            enrichDiscordParty(hub, t.initiator_id),
+            enrichDiscordParty(hub, t.recipient_id),
+        ]);
+        const initiatorLabel = initiatorMc
+            ? `<@${t.initiator_id}> [${initiatorMc.mcName}](https://namemc.com/profile/${initiatorMc.mcUuid})`
+            : `<@${t.initiator_id}>`;
+        const recipientLabel = recipientMc
+            ? `[${recipientMc.mcName}](https://namemc.com/profile/${recipientMc.mcUuid}) <@${t.recipient_id}>`
+            : `<@${t.recipient_id}>`;
         const embed = new EmbedBuilder()
             .setTitle('✅ Trade Confirmed!')
             .setDescription('This trade has been confirmed and finalized!')
             .addFields({
                 name: 'Trade Details',
-                value: `**Between:** <@${t.initiator_id}> ↔️ <@${t.recipient_id}>\n**Description:** ${t.description}\n**Confirmed:** <t:${Math.floor(Date.now() / 1000)}:R>`,
+                value: `**Between:** ${initiatorLabel} ↔️ ${recipientLabel}\n**Description:** ${t.description}\n**Confirmed:** <t:${Math.floor(Date.now() / 1000)}:R>`,
                 inline: false
             })
             .setColor('#00ff00');
@@ -348,9 +375,22 @@ function init(hub) {
             let recipientName = trade.recipient_id;
             try { initiatorName = (await hub.api('GET', `/tradebot/mc-username/${trade.initiator_id}`)).username ?? initiatorName; } catch {}
             try { recipientName = (await hub.api('GET', `/tradebot/mc-username/${trade.recipient_id}`)).username ?? recipientName; } catch {}
+
+            const initiatorMcLink = `[${initiatorName}](https://namemc.com/profile/${trade.initiator_id})`;
+            const recipientMcLink = `[${recipientName}](https://namemc.com/profile/${trade.recipient_id})`;
+
+            const [initiatorDiscordId, recipientDiscordId] = await Promise.all([
+                enrichMcParty(hub, trade.initiator_id),
+                enrichMcParty(hub, trade.recipient_id),
+            ]);
+
             return {
-                initiatorLink: `[${initiatorName}](https://namemc.com/profile/${trade.initiator_id})`,
-                recipientLink: `[${recipientName}](https://namemc.com/profile/${trade.recipient_id})`,
+                initiatorLabel: initiatorDiscordId
+                    ? `<@${initiatorDiscordId}> ${initiatorMcLink}`
+                    : initiatorMcLink,
+                recipientLabel: recipientDiscordId
+                    ? `${recipientMcLink} <@${recipientDiscordId}>`
+                    : recipientMcLink,
             };
         }
 
@@ -368,25 +408,25 @@ function init(hub) {
             if (!trade || trade.channel_id !== MC_CHANNEL_ID) return;
 
             if (payload.action === 'trade_confirmed') {
-                const { initiatorLink, recipientLink } = await resolveNames(trade);
+                const { initiatorLabel, recipientLabel } = await resolveNames(trade);
                 const embed = new EmbedBuilder()
                     .setTitle('✅ Trade Confirmed! (Minecraft)')
                     .setDescription(`A trade on \`${trade.guild_id}\` has been confirmed.`)
                     .addFields({
                         name: 'Trade Details',
-                        value: `**Trade ID:** ${trade.id}\n**Between:** ${initiatorLink} ↔️ ${recipientLink}\n**Description:** ${trade.description}\n**Confirmed:** <t:${Math.floor(Date.now() / 1000)}:R>`,
+                        value: `**Trade ID:** ${trade.id}\n**Between:** ${initiatorLabel} ↔️ ${recipientLabel}\n**Description:** ${trade.description}\n**Confirmed:** <t:${Math.floor(Date.now() / 1000)}:R>`,
                         inline: false
                     })
                     .setColor('#00ff00');
                 await postToVerifiedTrades(embed);
             } else if (payload.action === 'trade_rejected') {
-                const { initiatorLink, recipientLink } = await resolveNames(trade);
+                const { initiatorLabel, recipientLabel } = await resolveNames(trade);
                 const embed = new EmbedBuilder()
                     .setTitle('❌ Trade Rejected (Minecraft)')
                     .setDescription(`A trade on \`${trade.guild_id}\` has been rejected.`)
                     .addFields({
                         name: 'Trade Details',
-                        value: `**Trade ID:** ${trade.id}\n**Between:** ${initiatorLink} ↔️ ${recipientLink}\n**Description:** ${trade.description}\n**Rejected:** <t:${Math.floor(Date.now() / 1000)}:R>`,
+                        value: `**Trade ID:** ${trade.id}\n**Between:** ${initiatorLabel} ↔️ ${recipientLabel}\n**Description:** ${trade.description}\n**Rejected:** <t:${Math.floor(Date.now() / 1000)}:R>`,
                         inline: false
                     })
                     .setColor('#ff0000');
