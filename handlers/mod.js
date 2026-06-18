@@ -447,6 +447,89 @@ function init(hub) {
         await interaction.editReply({ embeds: [embed], components: [] });
     }
 
+    async function postToVerifiedTrades(client, embed) {
+        for (const guild of client.guilds.cache.values()) {
+            const channel = guild.channels.cache.find(
+                ch => ch.name.includes('verified-trade') && (ch.type === 0 || ch.type === 5)
+            );
+            if (channel) {
+                await channel.send({ embeds: [embed] }).catch(err =>
+                    console.error(`[mod] Failed to post to #${channel.name} in ${guild.name}:`, err.message)
+                );
+            }
+        }
+    }
+
+    async function resolveDisplayName(targetId, mcUuid) {
+        if (mcUuid) {
+            const data = await hub.api('GET', `/tradebot/mc-username/${mcUuid}`).catch(() => null);
+            const name = data?.username || mcUuid;
+            return { display: `[${name}](https://namemc.com/profile/${mcUuid})`, name };
+        }
+        return { display: `<@${targetId}>`, name: targetId };
+    }
+
+    async function resetUserTrades(interaction, user, mcUuid = null) {
+        await interaction.deferReply();
+        const moderatorId = interaction.user.id;
+        const targetId = mcUuid || user.id;
+        const reason = interaction.options.getString('details');
+        const { display, name } = await resolveDisplayName(targetId, mcUuid);
+        let result;
+        try {
+            result = await hub.api('POST', `/tradebot/user/${targetId}/void-trades`, { reason });
+        } catch (err) {
+            console.error(`[resetUserTrades] Hub error for ${targetId}:`, err?.status, err?.message, err);
+            return interaction.editReply({ content: `❌ Error voiding trades. (${err?.status ?? err?.message ?? 'unknown'})` });
+        }
+        const embed = new EmbedBuilder()
+            .setTitle('🔄 Trades Reset')
+            .addFields(
+                { name: 'User', value: display, inline: true },
+                { name: 'Reset By', value: `<@${moderatorId}>`, inline: true },
+                { name: 'Trades Voided', value: String(result.affected), inline: true },
+                { name: 'Reason', value: reason, inline: false }
+            )
+            .setDescription('Trades are soft-hidden. Use "Unreset User Trades" to restore.')
+            .setColor('#ff9900');
+        await interaction.editReply({ embeds: [embed] });
+        const announceEmbed = new EmbedBuilder()
+            .setTitle('🔄 Trade History Reset')
+            .setDescription(`${display}'s trades have been reset by moderation.\n**Reason:** ${reason}`)
+            .setColor('#ff9900');
+        await postToVerifiedTrades(interaction.client, announceEmbed);
+    }
+
+    async function unresetUserTrades(interaction, user, mcUuid = null) {
+        await interaction.deferReply();
+        const moderatorId = interaction.user.id;
+        const targetId = mcUuid || user.id;
+        const reason = interaction.options.getString('details');
+        const { display } = await resolveDisplayName(targetId, mcUuid);
+        let result;
+        try {
+            result = await hub.api('POST', `/tradebot/user/${targetId}/unvoid-trades`, { reason });
+        } catch (err) {
+            console.error(`[unresetUserTrades] Hub error for ${targetId}:`, err?.status, err?.message, err);
+            return interaction.editReply({ content: `❌ Error restoring trades. (${err?.status ?? err?.message ?? 'unknown'})` });
+        }
+        const embed = new EmbedBuilder()
+            .setTitle('✅ Trades Restored')
+            .addFields(
+                { name: 'User', value: display, inline: true },
+                { name: 'Restored By', value: `<@${moderatorId}>`, inline: true },
+                { name: 'Trades Restored', value: String(result.affected), inline: true },
+                { name: 'Reason', value: reason, inline: false }
+            )
+            .setColor('#00ff00');
+        await interaction.editReply({ embeds: [embed] });
+        const announceEmbed = new EmbedBuilder()
+            .setTitle('✅ Trade History Restored')
+            .setDescription(`${display}'s trades have been restored by moderation.\n**Reason:** ${reason}`)
+            .setColor('#00ff00');
+        await postToVerifiedTrades(interaction.client, announceEmbed);
+    }
+
     async function exportScammers(interaction) {
         await interaction.deferReply({ flags: 64 });
         const data = await hub.api('GET', '/tradebot/scammers');
@@ -468,7 +551,7 @@ function init(hub) {
         await interaction.editReply({ content: `🚨 ${scammers.length} scammer(s) on record`, files: [attachment] });
     }
 
-    return { checkModeratorPermission, showModeratedTrades, resolveTradeReport, deleteTrade, showUserWarnings, markScammer, unmarkScammer, exportTradeSummary, exportFullStats, showResolveActions, handleResolveAction, exportScammers };
+    return { checkModeratorPermission, showModeratedTrades, resolveTradeReport, deleteTrade, showUserWarnings, markScammer, unmarkScammer, exportTradeSummary, exportFullStats, showResolveActions, handleResolveAction, exportScammers, resetUserTrades, unresetUserTrades };
 }
 
 module.exports = init;

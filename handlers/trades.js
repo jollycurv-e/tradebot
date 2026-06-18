@@ -396,18 +396,30 @@ function init(hub) {
 
         async function postToVerifiedTrades(embed) {
             for (const guild of discordClient.guilds.cache.values()) {
-                const channel = guild.channels.cache.find(ch => ch.name.includes('verified-trade') && ch.type === 0);
-                if (channel) {
-                    try { await channel.send({ embeds: [embed] }); } catch {}
+                const channel = guild.channels.cache.find(
+                    ch => ch.name.includes('verified-trade') && (ch.type === 0 || ch.type === 5)
+                );
+                if (!channel) {
+                    console.log(`[MC Trades] No #verified-trade channel found in guild ${guild.name}`);
+                    continue;
+                }
+                try {
+                    await channel.send({ embeds: [embed] });
+                    console.log(`[MC Trades] Posted to #${channel.name} in ${guild.name}`);
+                } catch (err) {
+                    console.error(`[MC Trades] Failed to post to #${channel.name} in ${guild.name}:`, err.message);
                 }
             }
         }
 
         hub.onMessage(async (payload) => {
             const trade = payload.data?.trade;
-            if (!trade || trade.channel_id !== MC_CHANNEL_ID) return;
+            if (!trade) return;
+            debug(`[MC Trades] WS event: action=${payload.action} channel_id=${trade.channel_id}`);
+            if (trade.channel_id !== MC_CHANNEL_ID) return;
 
             if (payload.action === 'trade_confirmed') {
+                console.log(`[MC Trades] trade_confirmed #${trade.id} from ${trade.guild_id}`);
                 const { initiatorLabel, recipientLabel } = await resolveNames(trade);
                 const embed = new EmbedBuilder()
                     .setTitle('✅ Trade Confirmed! (Minecraft)')
@@ -420,6 +432,7 @@ function init(hub) {
                     .setColor('#00ff00');
                 await postToVerifiedTrades(embed);
             } else if (payload.action === 'trade_rejected') {
+                console.log(`[MC Trades] trade_rejected #${trade.id} from ${trade.guild_id}`);
                 const { initiatorLabel, recipientLabel } = await resolveNames(trade);
                 const embed = new EmbedBuilder()
                     .setTitle('❌ Trade Rejected (Minecraft)')

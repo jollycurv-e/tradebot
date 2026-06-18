@@ -199,7 +199,9 @@ class TraderBot {
                             { name: 'Mark Scammer', value: 'scammer' },
                             { name: 'Remove Scammer Mark', value: 'unscammer' },
                             { name: 'Export Summary CSV', value: 'export_summary' },
-                            { name: 'Export Full Stats CSV', value: 'export_full' }
+                            { name: 'Export Full Stats CSV', value: 'export_full' },
+                            { name: 'Reset User Trades', value: 'reset_trades' },
+                            { name: 'Unreset User Trades', value: 'unreset_trades' }
                         ))
                 .addUserOption(option =>
                     option.setName('user')
@@ -381,6 +383,30 @@ class TraderBot {
                     break;
                 case 'export_full':
                     await this.mod.exportFullStats(interaction, since);
+                    break;
+                case 'reset_trades':
+                    if (!details) {
+                        return interaction.reply({ content: '❌ Reason (details) is required to reset trades!', flags: 64 });
+                    }
+                    if (mcUser) {
+                        await this.mod.resetUserTrades(interaction, null, mcUser);
+                    } else if (user) {
+                        await this.mod.resetUserTrades(interaction, user);
+                    } else {
+                        return interaction.reply({ content: '❌ Provide a Discord user or mc_user (Minecraft UUID)!', flags: 64 });
+                    }
+                    break;
+                case 'unreset_trades':
+                    if (!details) {
+                        return interaction.reply({ content: '❌ Reason (details) is required to restore trades!', flags: 64 });
+                    }
+                    if (mcUser) {
+                        await this.mod.unresetUserTrades(interaction, null, mcUser);
+                    } else if (user) {
+                        await this.mod.unresetUserTrades(interaction, user);
+                    } else {
+                        return interaction.reply({ content: '❌ Provide a Discord user or mc_user (Minecraft UUID)!', flags: 64 });
+                    }
                     break;
                 default:
                     await interaction.reply({ content: '❌ Invalid moderation action!', flags: 64 });
