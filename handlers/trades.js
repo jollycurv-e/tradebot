@@ -273,9 +273,11 @@ function init(hub) {
         if (scammerStatus) embedColor = '#ff0000';
         else if (warnings.length > 0) embedColor = '#ff9900';
 
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id);
         const embed = new EmbedBuilder()
             .setTitle(`📈 Trading Statistics for ${user.displayName || user.username}`)
             .setColor(embedColor);
+        if (isUuid) embed.setURL(`https://namemc.com/profile/${user.id}`);
 
         embed.addFields(
             {
@@ -344,27 +346,43 @@ function init(hub) {
     }
 
     async function showTradesByMcUser(context, mcUsername) {
-        let uuid;
-        try {
-            const data = await hub.api('GET', `/convert-username-to-uuid?username=${encodeURIComponent(mcUsername)}`);
-            uuid = data?.uuid;
-        } catch {
-            return reply(context, `❌ Minecraft user \`${mcUsername}\` not found.`);
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(mcUsername);
+        let uuid, displayName;
+        if (isUuid) {
+            uuid = mcUsername;
+            try { displayName = (await hub.api('GET', `/tradebot/mc-username/${uuid}`)).username; } catch {}
+            displayName = displayName || uuid;
+        } else {
+            try {
+                const data = await hub.api('GET', `/convert-username-to-uuid?username=${encodeURIComponent(mcUsername)}`);
+                uuid = data?.uuid;
+            } catch {
+                return reply(context, `❌ Minecraft user \`${mcUsername}\` not found.`);
+            }
+            if (!uuid) return reply(context, `❌ Minecraft user \`${mcUsername}\` not found.`);
+            displayName = mcUsername;
         }
-        if (!uuid) return reply(context, `❌ Minecraft user \`${mcUsername}\` not found.`);
-        await showTrades(context, { id: uuid, displayName: mcUsername, username: mcUsername });
+        await showTrades(context, { id: uuid, displayName, username: displayName });
     }
 
     async function showStatsByMcUser(context, mcUsername) {
-        let uuid;
-        try {
-            const data = await hub.api('GET', `/convert-username-to-uuid?username=${encodeURIComponent(mcUsername)}`);
-            uuid = data?.uuid;
-        } catch {
-            return reply(context, `❌ Minecraft user \`${mcUsername}\` not found.`);
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(mcUsername);
+        let uuid, displayName;
+        if (isUuid) {
+            uuid = mcUsername;
+            try { displayName = (await hub.api('GET', `/tradebot/mc-username/${uuid}`)).username; } catch {}
+            displayName = displayName || uuid;
+        } else {
+            try {
+                const data = await hub.api('GET', `/convert-username-to-uuid?username=${encodeURIComponent(mcUsername)}`);
+                uuid = data?.uuid;
+            } catch {
+                return reply(context, `❌ Minecraft user \`${mcUsername}\` not found.`);
+            }
+            if (!uuid) return reply(context, `❌ Minecraft user \`${mcUsername}\` not found.`);
+            displayName = mcUsername;
         }
-        if (!uuid) return reply(context, `❌ Minecraft user \`${mcUsername}\` not found.`);
-        await showTradeStats(context, { id: uuid, displayName: mcUsername, username: mcUsername });
+        await showTradeStats(context, { id: uuid, displayName, username: displayName });
     }
 
     function listenForMcConfirms(discordClient) {
