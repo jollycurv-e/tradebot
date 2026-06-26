@@ -67,3 +67,11 @@ Discord ──► bot.js ──► hub.js (HTTP + WS) ──► Hub API ──�
 | `user_links` | Discord snowflake ↔ Minecraft UUID mapping |
 
 MC-originated trades: `channel_id = 'minecraft'`, `guild_id = NULL`. Discord-originated trades: both set to real IDs. The `formatUserId()` helper in `trades.js` detects numeric (Discord) vs UUID-format IDs and formats accordingly.
+
+## Credits
+
+Originally created by [Ashley](https://discord.com/users/1292064277221343242) .
+
+Substantially expanded, refactored, and maintained by [JollyCurve_](https://discord.com/users/1310388036051144767).
+
+Released under the MIT License with permission from the original author.
